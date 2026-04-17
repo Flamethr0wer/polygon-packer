@@ -13,7 +13,7 @@ arg_parser.add_argument("inner_sides", type=int, help="Number of sides of the in
 arg_parser.add_argument("container_sides", type=int, help="Number of sides of the container polygon")
 arg_parser.add_argument("--attempts", type=int, default=1000, help="Number of attempts to run")
 arg_parser.add_argument("--tolerance", type=float, default=1e-8, help="Overlap penalty tolerance. Probably best left at default")
-arg_parser.add_argument("--finalstep", type=float, default=0.0001, help="How small the last step in container size decrease will be (it gets smaller over time)")
+arg_parser.add_argument("--finalstep", type=float, default=0.0001, help="How small the last theoretical step in container size decrease will be (it gets smaller over time)")
 args = arg_parser.parse_args()
 
 N = args.inner_polygons
