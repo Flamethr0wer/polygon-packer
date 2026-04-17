@@ -4,10 +4,10 @@ This program can quickly solve the 2D bin packing problem for any number of any 
 
 To use it, download the python file, navigate to its location and run it like this:
 
-`python3 polygon_packer.py n nsi nsc`
-- Replace <n> with the number of inner polygons you want to solve for
-- Replace <nsi> with the number of sides of the inner polygons (e.g. 4 for a square)
-- Replace <nsc> with the number of sides of the container polygon
+`python3 polygon_packer.py [n] [nsi] [nsc]`
+- Replace [n] with the number of inner polygons you want to solve for
+- Replace [nsi] with the number of sides of the inner polygons (e.g. 4 for a square)
+- Replace [nsc] with the number of sides of the container polygon
 Optional parameters:
 - `--attempts`: the total number of attempts to run. Increase to explore more possible packings. Defaults to 1000.
 - `--tolerance`: the tolerance for the penalty function. More penalty reduces the margin of overlap but limits exporation. Defaults to an empirical sweetspot of 0.00000001.
