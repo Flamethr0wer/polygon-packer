@@ -3,7 +3,7 @@ This program can quickly solve the 2D bin packing problem for any number of any 
 <img width="640" height="480" alt="30 triangles in a hexagon" src="https://github.com/user-attachments/assets/48591a93-3ed9-4031-9c42-8b6eb579d91e" />
 
 To use it, download the python file, navigate to its location and run it like this:
-`python3 polygon_packer.py <n> <nsi> <nsc>`
+`python3 polygon_packer.py n nsi nsc`
 - Replace <n> with the number of inner polygons you want to solve for
 - Replace <nsi> with the number of sides of the inner polygons (e.g. 4 for a square)
 - Replace <nsc> with the number of sides of the container polygon
