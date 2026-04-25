@@ -4,8 +4,6 @@ import matplotlib.pyplot as ppt
 from numba import njit
 from joblib import Parallel, delayed
 import argparse
-from io import BytesIO
-import requests
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument("inner_polygons", type=int, help="Number of inner polygons")
