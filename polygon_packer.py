@@ -4,7 +4,9 @@ import matplotlib.pyplot as ppt
 from numba import njit
 from joblib import Parallel, delayed
 import argparse
+import time
 
+timestart=time.time()
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument("inner_polygons", type=int, help="Number of inner polygons")
 arg_parser.add_argument("inner_sides", type=int, help="Number of sides of the inner polygons")
@@ -33,22 +35,26 @@ unit_container_apothem = np.cos(np.pi / nsc)
 def transform_polygon(x, y, a, vertices):
     n_vertices = vertices.shape[0]
     transformed = np.empty_like(vertices)
+    cosa= np.cos(a)
+    sina= np.sin(a)
     for i in range(n_vertices):
         vx = vertices[i, 0]
         vy = vertices[i, 1]
-        transformed[i, 0] = x + (vx * np.cos(a) - vy * np.sin(a))
-        transformed[i, 1] = y + (vx * np.sin(a) + vy * np.cos(a))
+        transformed[i, 0] = x + (vx * cosa - vy * sina)
+        transformed[i, 1] = y + (vx * sina + vy * cosa)
     return transformed
 
 @njit(cache=True)
 def rotate_vectors(a, vectors):
     n_vectors = vectors.shape[0]
     rotated = np.empty_like(vectors)
+    sina = np.sin(a)
+    cosa = np.cos(a)
     for i in range(n_vectors):
         vecx = vectors[i, 0]
         vecy = vectors[i, 1]
-        rotated[i, 0] = vecx * np.cos(a) - vecy * np.sin(a)
-        rotated[i, 1] = vecx * np.sin(a) + vecy * np.cos(a)
+        rotated[i, 0] = vecx * cosa - vecy * sina
+        rotated[i, 1] = vecx * sina + vecy * cosa
     return rotated
         
 @njit(cache=True)
@@ -97,7 +103,7 @@ def bh_function(values, S):
                     dotp = polygon_array[i][vert, 0] * x_axis + polygon_array[i][vert, 1] * y_axis
                     if dotp < min_1: 
                         min_1 = dotp
-                    if dotp > max_1: 
+                    if dotp > max_1:
                         max_1 = dotp
 
                 min_2 = 100000000000000000000.0
@@ -117,7 +123,7 @@ def bh_function(values, S):
                     min_overlap = overlap
 
             if collision:
-                penalty += min_overlap * min_overlap
+                penalty += min_overlap**2
             
     return penalty
 
@@ -144,7 +150,6 @@ def repetition(seed):
 
     while True:
         minimized = minimize(bh_function, x0, args=(dynamic_S,), method="L-BFGS-B", tol=1e-8)
-        multiplier = 0.9999 - (dynamic_S - np.sqrt(N) * nsi / nsc) * 0.0099 / (initial_S - np.sqrt(N) * nsi / nsc)
         multiplier = 1 - final_step_size - (dynamic_S - np.sqrt(N) * nsi / nsc) * (0.01 - final_step_size) / (initial_S - np.sqrt(N) * nsi / nsc)
         if minimized.fun < penalty_tolerance:
             last_valid_x = minimized.x.copy()
@@ -191,3 +196,4 @@ for i in range(N):
 ax.set_aspect("equal")
 ppt.title(f"Side length: {best_S * np.sin(np.pi / nsc) / np.sin(np.pi / nsi)}")
 ppt.savefig(f"{N}_{nsi}_in_{nsc}.png")
+print(f"runtime: {round(time.time() - timestart)}")

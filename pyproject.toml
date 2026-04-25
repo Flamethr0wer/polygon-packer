@@ -11,4 +11,5 @@ dependencies = [
     "numpy>=2.4.4",
     "requests>=2.33.1",
     "scipy>=1.17.1",
+    "scipy-stubs>=1.17.1.4",
 ]
