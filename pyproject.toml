@@ -1,0 +1,14 @@
+[project]
+name = "polygon-packer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "joblib>=1.5.3",
+    "matplotlib>=3.10.9",
+    "numba>=0.65.1",
+    "numpy>=2.4.4",
+    "requests>=2.33.1",
+    "scipy>=1.17.1",
+]
