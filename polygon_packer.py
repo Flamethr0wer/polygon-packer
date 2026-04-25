@@ -88,7 +88,7 @@ def bh_function(values, S):
     for i in range(N):
         for j in range(i + 1, N):
             collision = True
-            min_overlap = 100000000000000000000.0
+            min_overlap = float('inf')
             for vec in range(nsi * 2):
                 if vec < nsi:
                     x_axis = vector_array[i][vec, 0]
@@ -97,8 +97,8 @@ def bh_function(values, S):
                     x_axis = vector_array[j][vec - nsi, 0]
                     y_axis = vector_array[j][vec - nsi, 1]
 
-                min_1 = 100000000000000000000.0
-                max_1 = -100000000000000000000.0
+                min_1 = float('inf')
+                max_1 = float('-inf')
                 for vert in range(nsi):
                     dotp = polygon_array[i][vert, 0] * x_axis + polygon_array[i][vert, 1] * y_axis
                     if dotp < min_1: 
@@ -106,8 +106,8 @@ def bh_function(values, S):
                     if dotp > max_1:
                         max_1 = dotp
 
-                min_2 = 100000000000000000000.0
-                max_2 = -100000000000000000000.0
+                min_2 = float('inf')
+                max_2 = float('-inf')
                 for vert in range(nsi):
                     dotp = polygon_array[j][vert, 0] * x_axis + polygon_array[j][vert, 1] * y_axis
                     if dotp < min_2: 
