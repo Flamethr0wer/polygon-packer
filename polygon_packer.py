@@ -142,10 +142,19 @@ def repetition(seed):
     last_valid_x = x0.copy()
     last_valid_S = dynamic_S
 
+    # These don't change so faster to implement outside the loop
+    target_S = np.sqrt(N) * nsi / nsc
+    den = initial_S - target_S
+
     while True:
         minimized = minimize(bh_function, x0, args=(dynamic_S,), method="L-BFGS-B", tol=1e-8)
-        multiplier = 0.9999 - (dynamic_S - np.sqrt(N) * nsi / nsc) * 0.0099 / (initial_S - np.sqrt(N) * nsi / nsc)
-        multiplier = 1 - final_step_size - (dynamic_S - np.sqrt(N) * nsi / nsc) * (0.01 - final_step_size) / (initial_S - np.sqrt(N) * nsi / nsc)
+
+        # Protection against division by 0 by checking den
+        if abs(den) < 1e-12:
+            multiplier = 1 - final_step_size
+        else:
+            multiplier = 1 - final_step_size - ((dynamic_S - target_S) * (0.01 - final_step_size) / den)
+            
         if minimized.fun < penalty_tolerance:
             last_valid_x = minimized.x.copy()
             last_valid_S = dynamic_S.copy()
