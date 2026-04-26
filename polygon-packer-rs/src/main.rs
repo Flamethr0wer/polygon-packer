@@ -20,7 +20,10 @@ const BH_STEPS: usize = 50;
 const BH_STEP_SIZE: f64 = 0.2;
 const BH_TEMP: f64 = 0.1;
 const VERIFY_EPS: f64 = 1e-9;
-const GRADIENT_EPS_REL: f64 = 1.0;
+// const GRADIENT_EPS_REL: f64 = 1.0;
+const ABS_GRADIENT_STEP: f64 = 1e-8;
+// enable for C1-continuity issues
+const CENTRAL_DIFF: bool = true;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
@@ -261,13 +264,34 @@ fn local_min(
     let obj = |xx: &[f64], grad: Option<&mut [f64]>, ctx: &mut OptCtx| -> f64 {
         let f0 = penalty(xx, s, args, geo, &mut ctx.pad);
         if let Some(g) = grad {
-            let eps = f64::EPSILON.sqrt();
+            // let eps = f64::EPSILON.sqrt();
             ctx.x_tmp.copy_from_slice(xx);
             for i in 0..xx.len() {
-                let step = eps * (GRADIENT_EPS_REL + xx[i].abs());
-                ctx.x_tmp[i] += step;
-                let f1 = penalty(&ctx.x_tmp, s, args, geo, &mut ctx.pad);
-                g[i] = (f1 - f0) / step;
+                // let step = eps * (GRADIENT_EPS_REL + xx[i].abs());
+                // ctx.x_tmp[i] += step;
+                // let f1 = penalty(&ctx.x_tmp, s, args, geo, &mut ctx.pad);
+                // g[i] = (f1 - f0) / step;
+                // ctx.x_tmp[i] = xx[i];
+
+                // let h = ABS_GRADIENT_STEP;
+                // ctx.x_tmp[i] = xx[i] + h;
+                // let fp = penalty(&ctx.x_tmp, s, args, geo, &mut ctx.pad);
+                // ctx.x_tmp[i] = xx[i] - h;
+                // let fm = penalty(&ctx.x_tmp, s, args, geo, &mut ctx.pad);
+                // g[i] = (fp - fm) / (2.0 * h);
+                // ctx.x_tmp[i] = xx[i];
+
+                let h = ABS_GRADIENT_STEP;
+                ctx.x_tmp[i] = xx[i] + h;
+                if CENTRAL_DIFF {
+                    let fp = penalty(&ctx.x_tmp, s, args, geo, &mut ctx.pad);
+                    ctx.x_tmp[i] = xx[i] - h;
+                    let fm = penalty(&ctx.x_tmp, s, args, geo, &mut ctx.pad);
+                    g[i] = (fp - fm) / (2.0 * h);
+                } else {
+                    let f1 = penalty(&ctx.x_tmp, s, args, geo, &mut ctx.pad);
+                    g[i] = (f1 - f0) / h;
+                }
                 ctx.x_tmp[i] = xx[i];
             }
         }
@@ -287,7 +311,7 @@ fn local_min(
     }
 }
 fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
-    let mut rng = PcgInnerState64::mcg_seeded(seed as u64);
+    let mut rng = PcgInnerState64::oneseq_seeded(seed as u64);
     eprintln!(
         "Starting attempt {} with seed {}",
         seed,
@@ -330,10 +354,14 @@ fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
                 let base = (args.inner_polygons as f64).sqrt()
                     * args.inner_sides as f64
                     / args.container_sides as f64;
-                let m = (s - base).mul_add(
-                    -((0.01 - args.finalstep) / (initial_s - base)),
-                    1.0 - args.finalstep,
-                );
+                // let m = (s - base).mul_add(
+                //     -((0.01 - args.finalstep) / (initial_s - base)),
+                //     1.0 - args.finalstep,
+                // );
+                let diff_s = s - base;
+                let range_s = initial_s - base;
+                let step_ratio = (0.01 - args.finalstep) / range_s;
+                let m = (1.0 - args.finalstep) - (diff_s * step_ratio);
                 for i in 0..args.inner_polygons {
                     x[i * 3] = refined[i * 3] * m;
                     x[i * 3 + 1] = refined[i * 3 + 1] * m;
@@ -348,10 +376,14 @@ fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
                 let base = (args.inner_polygons as f64).sqrt()
                     * args.inner_sides as f64
                     / args.container_sides as f64;
-                let m = (s - base).mul_add(
-                    -((0.01 - args.finalstep) / (initial_s - base)),
-                    1.0 - args.finalstep,
-                );
+                // let m = (s - base).mul_add(
+                //     -((0.01 - args.finalstep) / (initial_s - base)),
+                //     1.0 - args.finalstep,
+                // );
+                let diff_s = s - base;
+                let range_s = initial_s - base;
+                let step_ratio = (0.01 - args.finalstep) / range_s;
+                let m = (1.0 - args.finalstep) - (diff_s * step_ratio);
                 for i in 0..args.inner_polygons {
                     x[i * 3] = bh[i * 3] * m;
                     x[i * 3 + 1] = bh[i * 3 + 1] * m;
