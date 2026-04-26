@@ -5,22 +5,25 @@ edition = "2024"
 authors = ["Voxell Paladynee <voxellpaladynee@proton.me>"]
 
 [dependencies]
-# numeric library
-ndarray = "0.17.2"
-# optimization library
-nlopt = "0.6.0"
-# plot library
-plotters = "0.3"
-# parallelization
-rayon = "1.7"
-# command line argument parsing
-clap = { version = "4.4", features = ["derive"] }
-# Voxell's homegrown RNG library, used for pure-rust PCG family of random number
-# generators. https://www.pcg-random.org/index.html
-voxell_rng = "0.6.0"
 # bump allocator for temporary arena allocations to reduce transient heap use
-bumpalo = {version = "3", features = ["collections"]}
-nalgebra = "0.34.2"
+bumpalo = { version = "3", features = ["collections"] } 
+# command line argument parsing
+clap = { version = "4.4", features = ["derive"] } 
+# linear algebra library for geometric computations
+nalgebra = "0.34.2" 
+# numeric library
+ndarray = "0.17.2" 
+# optimization library
+nlopt = "0.6.0" 
+# plot library
+plotters = "0.3" 
+# parallelization
+rayon = "1.7" 
+# Voxell's homegrown RNG library, used for pure-rust PCG family of random number 
+# generators. https://www.pcg-random.org/index.html
+voxell_rng = "0.6.0" 
+# Voxell's homegrown timer library
+voxell_timer = "1.2.2" 
 
 [profile.release]
 # opt-level: 3 for full optimizations
