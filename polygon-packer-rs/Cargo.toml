@@ -1,0 +1,36 @@
+[package]
+name = "polygon-packer-rs"
+version = "0.1.0"
+edition = "2024"
+authors = ["Voxell Paladynee <voxellpaladynee@proton.me>"]
+
+[dependencies]
+# numeric library
+ndarray = "0.17.2"
+# optimization library
+argmin = "0.11.0"
+argmin-math = { version = "0.5", features = ["vec"] }
+# plot library
+plotters = "0.3"
+# parallelization
+rayon = "1.7"
+# command line argument parsing
+clap = { version = "4.4", features = ["derive"] }
+# Voxell's homegrown RNG library, used for pure-rust PCG family of random number
+# generators. https://www.pcg-random.org/index.html
+voxell_rng = "0.6.0"
+
+[profile.release]
+# opt-level: 3 for full optimizations
+opt-level = 3
+# lto: allows library code to be more aggressively inlined
+# "thin" for a lighter mode, "fat" for max perf
+lto = "fat"
+# codegen-units: only 1 concurrent compiler so the optimizer
+# has maximum code context 
+codegen-units = 1
+# panic: this potentially reduces instruction-cache pressure, but if it crashes
+# you won't get fancy errors.
+# set to "unwind" for fancy errors
+# set to "abort" for a very slight boost
+panic = "abort"
