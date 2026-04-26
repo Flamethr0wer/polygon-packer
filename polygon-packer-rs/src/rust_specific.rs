@@ -6,7 +6,7 @@ use std::f64;
 
 /// change this type to `f32` be less precise but get faster,
 /// or `f64` to be more precise but get slower.
-pub type FloatType = f32;
+pub type FloatType = f64;
 
 /// an interface that defines PI for both 32 bit and 64 bit floats.
 pub trait AssocPI {

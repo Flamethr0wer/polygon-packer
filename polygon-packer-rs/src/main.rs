@@ -1,786 +1,390 @@
-extern crate argmin;
-extern crate clap;
-extern crate ndarray;
-extern crate plotters;
-extern crate rayon;
+use std::f64::consts::PI;
 
-mod rust_specific;
-use std::cmp::min;
-use std::iter;
-
-use rust_specific::AssocPI;
-use rust_specific::FloatType;
-// this is π in either f32 or f64
-const PI: FloatType = <FloatType as AssocPI>::PI;
-
-use argmin::core::CostFunction;
-use argmin::core::Error;
-use argmin::core::Executor;
-use argmin::core::Gradient;
-use argmin::core::State;
-use argmin::solver::linesearch::BacktrackingLineSearch;
-use argmin::solver::linesearch::condition::ArmijoCondition;
-use argmin::solver::quasinewton::LBFGS;
 use clap::Parser;
-use ndarray::Array2;
+use nalgebra::Rotation2;
+use nalgebra::Vector2;
+use nlopt::Algorithm;
+use nlopt::Nlopt;
+use nlopt::Target;
 use plotters::prelude::*;
 use rayon::prelude::*;
 use voxell_rng::rng::pcg_advanced::pcg_64::PcgInnerState64;
 
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Number of inner polygons
-    inner_polygons: usize,
-    /// Number of sides of the inner polygons
-    inner_sides: usize,
-    /// Number of sides of the container polygon
-    container_sides: usize,
-    /// Number of attempts to run
-    #[arg(long, default_value_t = 1000)]
-    attempts: usize,
-    /// Overlap penalty tolerance. Probably best left at default
-    #[arg(long, default_value_t = 1e-8)]
-    tolerance: FloatType,
-    /// How small the last theoretical step in container size decrease will be
-    /// (it gets smaller over time)
-    #[arg(long, default_value_t = 0.0001)]
-    finalstep: FloatType,
-}
-
 fn main() {
     let args = Args::parse();
+    let geo = Geometry::new(args.inner_sides, args.container_sides);
 
-    let n = args.inner_polygons;
-    let nsi = args.inner_sides;
-    let nsc = args.container_sides;
-    let attempts = args.attempts;
-    let penalty_tolerance = args.tolerance;
-    let final_step_size = args.finalstep;
-
-    // Translated from Python:
-    // unit_polygon_angles = np.linspace(0, 2 * np.pi, nsi, endpoint=False)
-    let unit_polygon_angles_vec: Vec<FloatType> = (0..nsi)
-        .map(|i| 2.0 * PI * (i as FloatType) / (nsi as FloatType))
-        .collect();
-
-    // unit_polygon_vertices = np.column_stack((np.cos(unit_polygon_angles),
-    // np.sin(unit_polygon_angles)))
-    let mut unit_polygon_vertices_buf: Vec<FloatType> =
-        Vec::with_capacity(nsi * 2);
-    for &a in &unit_polygon_angles_vec {
-        unit_polygon_vertices_buf.push(a.cos());
-        unit_polygon_vertices_buf.push(a.sin());
-    }
-    let unit_polygon_vertices: Array2<FloatType> =
-        Array2::from_shape_vec((nsi, 2), unit_polygon_vertices_buf).unwrap();
-
-    // unit_polygon_vectors = np.column_stack((np.cos(unit_polygon_angles +
-    // np.pi / nsi), np.sin(unit_polygon_angles + np.pi / nsi)))
-    let mut unit_polygon_vectors_buf: Vec<FloatType> =
-        Vec::with_capacity(nsi * 2);
-    let offset_nsi = PI / (nsi as FloatType);
-    for &a in &unit_polygon_angles_vec {
-        let aa = a + offset_nsi;
-        unit_polygon_vectors_buf.push(aa.cos());
-        unit_polygon_vectors_buf.push(aa.sin());
-    }
-    let unit_polygon_vectors: Array2<FloatType> =
-        Array2::from_shape_vec((nsi, 2), unit_polygon_vectors_buf).unwrap();
-
-    // unit_container_angles = np.linspace(0, 2 * np.pi, nsc, endpoint=False)
-    let unit_container_angles: Vec<FloatType> = (0..nsc)
-        .map(|i| 2.0 * PI * (i as FloatType) / (nsc as FloatType))
-        .collect();
-
-    // unit_container_vertices = np.column_stack((np.cos(unit_container_angles),
-    // np.sin(unit_container_angles)))
-    let mut unit_container_vertices_buf: Vec<FloatType> =
-        Vec::with_capacity(nsc * 2);
-    for &a in &unit_container_angles {
-        unit_container_vertices_buf.push(a.cos());
-        unit_container_vertices_buf.push(a.sin());
-    }
-    let unit_container_vertices: Array2<FloatType> =
-        Array2::from_shape_vec((nsc, 2), unit_container_vertices_buf).unwrap();
-
-    // unit_container_vectors = np.column_stack((np.cos(unit_container_angles +
-    // np.pi / nsc), np.sin(unit_container_angles + np.pi / nsc)))
-    let mut unit_container_vectors_buf: Vec<FloatType> =
-        Vec::with_capacity(nsc * 2);
-    let offset_nsc = PI / (nsc as FloatType);
-    for &a in &unit_container_angles {
-        let aa = a + offset_nsc;
-        unit_container_vectors_buf.push(aa.cos());
-        unit_container_vectors_buf.push(aa.sin());
-    }
-    let unit_container_vectors: Array2<FloatType> =
-        Array2::from_shape_vec((nsc, 2), unit_container_vectors_buf).unwrap();
-
-    // unit_container_apothem = np.cos(np.pi / nsc)
-    let unit_container_apothem: FloatType = (PI / (nsc as FloatType)).cos();
-
-    let mut best_s: FloatType = FloatType::INFINITY;
-    let mut best_values: Option<Vec<FloatType>> = None;
-
-    // results = Parallel(n_jobs=-1, prefer="processes")(delayed(repetition)(i)
-    // for i in range(attempts))
-    let results: Vec<(FloatType, _)> = (0..attempts)
+    let results: Vec<(f64, Vec<f64>)> = (0..args.attempts)
         .into_par_iter()
+        .map(|i| repetition(i, &args, &geo))
+        .collect();
+
+    if let Some((best_s, best_v)) = results
+        .into_iter()
+        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+    {
+        let side_len = best_s * (PI / args.container_sides as f64).sin()
+            / (PI / args.inner_sides as f64).sin();
+        println!("Final side length: {}", side_len);
+
+        verify_results(&best_v, best_s, &args, &geo);
+        render(&args, &geo, best_s, &best_v);
+    }
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct Args {
+    pub inner_polygons: usize,
+    pub inner_sides: usize,
+    pub container_sides: usize,
+    #[arg(long, default_value_t = 1000)]
+    pub attempts: usize,
+    #[arg(long, default_value_t = 1e-8)]
+    pub tolerance: f64,
+    #[arg(long, default_value_t = 0.0001)]
+    pub finalstep: f64,
+}
+
+struct Geometry {
+    inner_verts: Vec<Vector2<f64>>,
+    inner_axes: Vec<Vector2<f64>>,
+    cont_axes: Vec<Vector2<f64>>,
+    apothem: f64,
+}
+
+impl Geometry {
+    fn new(nsi: usize, nsc: usize) -> Self {
+        let i_angle = 2.0 * PI / nsi as f64;
+        let c_angle = 2.0 * PI / nsc as f64;
+        let inner_verts = (0..nsi)
+            .map(|i| {
+                Vector2::new(
+                    (i as f64 * i_angle).cos(),
+                    (i as f64 * i_angle).sin(),
+                )
+            })
+            .collect();
+        let inner_axes = (0..nsi)
+            .map(|i| {
+                let a = i as f64 * i_angle + PI / nsi as f64;
+                Vector2::new(a.cos(), a.sin())
+            })
+            .collect();
+        let cont_axes = (0..nsc)
+            .map(|i| {
+                let a = i as f64 * c_angle + PI / nsc as f64;
+                Vector2::new(a.cos(), a.sin())
+            })
+            .collect();
+        Self {
+            inner_verts,
+            inner_axes,
+            cont_axes,
+            apothem: (PI / nsc as f64).cos(),
+        }
+    }
+}
+
+fn penalty(v: &[f64], s: f64, args: &Args, geo: &Geometry) -> f64 {
+    let mut p = 0.0;
+    let limit = geo.apothem * s;
+
+    // 1. Container Penalty (Poking)
+    for i in 0..args.inner_polygons {
+        let (pos, rot) = (
+            Vector2::new(v[i * 3], v[i * 3 + 1]),
+            Rotation2::new(v[i * 3 + 2]),
+        );
+        for iv in &geo.inner_verts {
+            let pt = rot * iv + pos;
+            for ax in &geo.cont_axes {
+                let dist = pt.dot(ax);
+                if dist > limit {
+                    p += (dist - limit).powi(2);
+                }
+            }
+        }
+    }
+
+    // 2. Pairwise Collision Penalty (SAT)
+    let polys: Vec<_> = (0..args.inner_polygons)
         .map(|i| {
-            repetition(
-                i,
-                n,
-                nsi,
-                nsc,
-                penalty_tolerance,
-                final_step_size,
-                &unit_polygon_vertices,
-                &unit_polygon_vectors,
-                &unit_container_vectors,
-                unit_container_apothem,
+            let (pos, rot) = (
+                Vector2::new(v[i * 3], v[i * 3 + 1]),
+                Rotation2::new(v[i * 3 + 2]),
+            );
+            (
+                geo.inner_verts
+                    .iter()
+                    .map(|&iv| rot * iv + pos)
+                    .collect::<Vec<_>>(),
+                geo.inner_axes
+                    .iter()
+                    .map(|&ia| rot * ia)
+                    .collect::<Vec<_>>(),
             )
         })
         .collect();
 
-    for (s, values) in results {
-        if s < best_s {
-            best_s = s;
-            best_values = Some(values);
-        }
-    }
-
-    println!(
-        "Final side length: {}",
-        // best_S * np.sin(np.pi / nsc) / np.sin(np.pi / nsi),
-        best_s * (PI / (nsc as FloatType)).sin()
-            / (PI / (nsi as FloatType)).sin(),
-    );
-
-    // ============== NOTE(@paladynee): ===============
-    // anything found after this line is translated from Python into Rust
-    // via an AI agent. the numerical results (excluding nondeterminism from
-    // rngs) have been checked against python over multiple passes.
-    //
-    // i am not well versed in mathematics so if anybody could fact check this
-    // implementation and remove this note, I'd be very glad.
-
-    if let Some(vals) = best_values {
-        if vals.len() == n * 3 {
-            let positions = Array2::from_shape_vec((n, 3), vals).unwrap();
-            println!("Final positions (first 5 rows):");
-            for i in 0..min(5, n) {
-                println!("  {}: {:?}", i, positions.row(i));
-            }
-
-            // Plot result to PNG using Plotters (match Python output)
-            let file_name = format!("{}_{}_in_{}.png", n, nsi, nsc);
-            // collect polygon points and container points (as f64)
-            let mut all_points: Vec<(f64, f64)> = Vec::new();
-            let mut polys: Vec<Vec<(f64, f64)>> = Vec::with_capacity(n);
-            for i in 0..n {
-                let x = positions[[i, 0]];
-                let y = positions[[i, 1]];
-                let a = positions[[i, 2]];
-                let poly = transform_polygon(x, y, a, &unit_polygon_vertices);
-                let mut pts: Vec<(f64, f64)> =
-                    Vec::with_capacity(poly.len() / 2 + 1);
-                for k in 0..(poly.len() / 2) {
-                    let px = poly[k * 2] as f64;
-                    let py = poly[k * 2 + 1] as f64;
-                    pts.push((px, py));
-                    all_points.push((px, py));
+    for i in 0..args.inner_polygons {
+        for j in i + 1..args.inner_polygons {
+            let mut min_overlap = 1e20;
+            let mut collision = true;
+            for ax in polys[i].1.iter().chain(polys[j].1.iter()) {
+                let (min1, max1) = project(&polys[i].0, ax);
+                let (min2, max2) = project(&polys[j].0, ax);
+                let overlap = max1.min(max2) - min1.max(min2);
+                if overlap <= 0.0 {
+                    collision = false;
+                    break;
                 }
-                if let Some(first) = pts.first().copied() {
-                    pts.push(first);
-                    all_points.push(first);
-                }
-                polys.push(pts);
-            }
-
-            let mut container_pts: Vec<(f64, f64)> =
-                Vec::with_capacity(unit_container_vertices.shape()[0] + 1);
-            for i in 0..unit_container_vertices.shape()[0] {
-                let cx = unit_container_vertices[[i, 0]] * best_s;
-                let cy = unit_container_vertices[[i, 1]] * best_s;
-                container_pts.push((cx as f64, cy as f64));
-                all_points.push((cx as f64, cy as f64));
-            }
-            if let Some(first) = container_pts.first().copied() {
-                container_pts.push(first);
-                all_points.push(first);
-            }
-
-            // determine bounds and padding
-            let (mut min_x, mut max_x, mut min_y, mut max_y) = (
-                f64::INFINITY,
-                f64::NEG_INFINITY,
-                f64::INFINITY,
-                f64::NEG_INFINITY,
-            );
-            for (x, y) in &all_points {
-                if *x < min_x {
-                    min_x = *x;
-                }
-                if *x > max_x {
-                    max_x = *x;
-                }
-                if *y < min_y {
-                    min_y = *y;
-                }
-                if *y > max_y {
-                    max_y = *y;
+                if overlap < min_overlap {
+                    min_overlap = overlap;
                 }
             }
-            // choose grid steps matching the requested ticks
-            let x_step = 1.0_f64;
-            let y_step = 0.5_f64;
-            let x_min_tick = (min_x / x_step).floor() * x_step;
-            let x_max_tick = (max_x / x_step).ceil() * x_step;
-            let y_min_tick = (min_y / y_step).floor() * y_step;
-            let y_max_tick = (max_y / y_step).ceil() * y_step;
-
-            // Equalize spans so 1 unit in x equals 1 unit in y on the image
-            let dx = x_max_tick - x_min_tick;
-            let dy = y_max_tick - y_min_tick;
-            let span = dx.max(dy);
-            let x_center = f64::midpoint(y_min_tick, y_max_tick);
-            let y_center = f64::midpoint(y_min_tick, y_max_tick);
-            let x_min_eq = x_center - span / 2.0;
-            let x_max_eq = x_center + span / 2.0;
-            let y_min_eq = y_center - span / 2.0;
-            let y_max_eq = y_center + span / 2.0;
-
-            // Render PNG on a square canvas so aspect ratio is preserved
-            let backend = BitMapBackend::new(&file_name, (1024, 1024));
-            let root = backend.into_drawing_area();
-            root.fill(&WHITE).unwrap();
-            let mut chart = ChartBuilder::on(&root)
-                .margin(10)
-                .caption(
-                    format!(
-                        "Side length: {}",
-                        best_s * (PI / (nsc as FloatType)).sin()
-                            / (PI / (nsi as FloatType)).sin()
-                    ),
-                    ("sans-serif", 20).into_font(),
-                )
-                .build_cartesian_2d(x_min_eq..x_max_eq, y_min_eq..y_max_eq)
-                .unwrap();
-
-            // configure mesh to show ticks at our step sizes
-            let x_labels =
-                ((span / x_step).round() as usize).saturating_add(1).max(2);
-            let y_labels =
-                ((span / y_step).round() as usize).saturating_add(1).max(2);
-            chart
-                .configure_mesh()
-                .x_labels(x_labels)
-                .y_labels(y_labels)
-                .x_label_formatter(&|x| format!("{:.0}", x))
-                .y_label_formatter(&|y| format!("{:.1}", y))
-                .draw()
-                .ok();
-
-            // draw container outline
-            chart
-                .draw_series(iter::once(PathElement::new(
-                    container_pts.clone(),
-                    BLACK,
-                )))
-                .ok();
-
-            // draw filled polygons and outlines
-            for poly in polys {
-                let fill_style =
-                    Into::<ShapeStyle>::into(&RGBColor(204, 204, 204)).filled();
-                chart
-                    .draw_series(iter::once(Polygon::new(
-                        poly.clone(),
-                        fill_style,
-                    )))
-                    .ok();
-                chart
-                    .draw_series(iter::once(PathElement::new(poly, BLACK)))
-                    .ok();
-            }
-
-            root.present().ok();
-            println!("Saved plot to {}", file_name);
-        }
-    } else {
-        println!("No valid packing found in attempts");
-    }
-}
-
-// def repetition(seed):
-fn transform_polygon(
-    x: FloatType, y: FloatType, a: FloatType, vertices: &Array2<FloatType>,
-) -> Vec<FloatType> {
-    let n_vertices = vertices.shape()[0];
-    let mut transformed = vec![0.0 as FloatType; n_vertices * 2];
-    let ca = a.cos();
-    let sa = a.sin();
-    for i in 0..n_vertices {
-        let vx = vertices[[i, 0]];
-        let vy = vertices[[i, 1]];
-        transformed[i * 2] = x + vy.mul_add(-sa, vx * ca);
-        transformed[i * 2 + 1] = y + vy.mul_add(ca, vx * sa);
-    }
-    transformed
-}
-
-// BHProblem struct holds problem data used during cost evaluation.
-// To reduce memory pressure we compute transformed vertices and axes
-// on-the-fly instead of storing arena-backed scratch buffers.
-struct BHProblem<'a> {
-    n: usize,
-    nsi: usize,
-    nsc: usize,
-    unit_polygon_vertices: &'a Array2<FloatType>,
-    unit_polygon_vectors: &'a Array2<FloatType>,
-    unit_container_vectors: &'a Array2<FloatType>,
-    unit_container_apothem: FloatType,
-    s: FloatType,
-}
-
-// BH cost evaluation implemented as a method on the problem struct.
-// Use a bump arena and SoA scratch buffers (polys_x/polys_y, vecs_x/vecs_y)
-// to reduce transient heap allocations and improve data locality.
-impl<'a> BHProblem<'a> {
-    fn bh_function(&self, values: &[FloatType]) -> FloatType {
-        const HUGE: FloatType = 1e20 as FloatType;
-
-        let n_vertices = self.unit_polygon_vertices.shape()[0];
-        let nsi = self.nsi;
-        let nsc = self.nsc;
-
-        let limit = self.unit_container_apothem * self.s;
-
-        let mut penalty: FloatType = 0.0;
-
-        // Compute transformed vertices on-the-fly and apply container penalty.
-        for i in 0..self.n {
-            let posx = values[i * 3];
-            let posy = values[i * 3 + 1];
-            let rot = values[i * 3 + 2];
-            let ca = rot.cos();
-            let sa = rot.sin();
-
-            for v in 0..n_vertices {
-                let vx = self.unit_polygon_vertices[[v, 0]];
-                let vy = self.unit_polygon_vertices[[v, 1]];
-                let px = posx + vy.mul_add(-sa, vx * ca);
-                let py = posy + vy.mul_add(ca, vx * sa);
-
-                for ci in 0..nsc {
-                    let dvx = self.unit_container_vectors[[ci, 0]];
-                    let dvy = self.unit_container_vectors[[ci, 1]];
-                    let distance = py.mul_add(dvy, px * dvx);
-                    if distance > limit {
-                        let diff = distance - limit;
-                        penalty = diff.mul_add(diff, penalty);
-                    }
-                }
+            if collision {
+                p += min_overlap * min_overlap;
             }
         }
+    }
+    p
+}
 
-        // Pairwise separating axis test: compute axes and projections
-        // on-the-fly
-        for i in 0..self.n {
-            let posx_i = values[i * 3];
-            let posy_i = values[i * 3 + 1];
-            let rot_i = values[i * 3 + 2];
-            let ca_i = rot_i.cos();
-            let sa_i = rot_i.sin();
+fn project(verts: &[Vector2<f64>], ax: &Vector2<f64>) -> (f64, f64) {
+    verts
+        .iter()
+        .map(|v| v.dot(ax))
+        .fold((f64::MAX, f64::MIN), |(a, b), d| (a.min(d), b.max(d)))
+}
 
-            for j in (i + 1)..self.n {
-                let posx_j = values[j * 3];
-                let posy_j = values[j * 3 + 1];
-                let rot_j = values[j * 3 + 2];
-                let ca_j = rot_j.cos();
-                let sa_j = rot_j.sin();
-
-                let mut collision = true;
-                let mut min_overlap: FloatType = HUGE;
-
-                for vec_idx in 0..(nsi * 2) {
-                    let (x_axis, y_axis) = if vec_idx < nsi {
-                        let v = vec_idx;
-                        let ux = self.unit_polygon_vectors[[v, 0]];
-                        let uy = self.unit_polygon_vectors[[v, 1]];
-                        (
-                            uy.mul_add(-sa_i, ux * ca_i),
-                            uy.mul_add(ca_i, ux * sa_i),
-                        )
-                    } else {
-                        let v = vec_idx - nsi;
-                        let ux = self.unit_polygon_vectors[[v, 0]];
-                        let uy = self.unit_polygon_vectors[[v, 1]];
-                        (
-                            uy.mul_add(-sa_j, ux * ca_j),
-                            uy.mul_add(ca_j, ux * sa_j),
-                        )
-                    };
-
-                    let mut min_1 = HUGE;
-                    let mut max_1 = -HUGE;
-                    for vert in 0..nsi {
-                        let vx = self.unit_polygon_vertices[[vert, 0]];
-                        let vy = self.unit_polygon_vertices[[vert, 1]];
-                        let px = posx_i + vy.mul_add(-sa_i, vx * ca_i);
-                        let py = posy_i + vy.mul_add(ca_i, vx * sa_i);
-                        let dotp = py.mul_add(y_axis, px * x_axis);
-                        if dotp < min_1 {
-                            min_1 = dotp;
-                        }
-                        if dotp > max_1 {
-                            max_1 = dotp;
-                        }
-                    }
-
-                    let mut min_2 = HUGE;
-                    let mut max_2 = -HUGE;
-                    for vert in 0..nsi {
-                        let vx = self.unit_polygon_vertices[[vert, 0]];
-                        let vy = self.unit_polygon_vertices[[vert, 1]];
-                        let px = posx_j + vy.mul_add(-sa_j, vx * ca_j);
-                        let py = posy_j + vy.mul_add(ca_j, vx * sa_j);
-                        let dotp = py.mul_add(y_axis, px * x_axis);
-                        if dotp < min_2 {
-                            min_2 = dotp;
-                        }
-                        if dotp > max_2 {
-                            max_2 = dotp;
-                        }
-                    }
-
-                    let overlap = (if max_1 < max_2 { max_1 } else { max_2 })
-                        - (if min_1 > min_2 { min_1 } else { min_2 });
-                    if overlap <= (0.0 as FloatType) {
-                        collision = false;
-                        break;
-                    }
-                    if overlap < min_overlap {
-                        min_overlap = overlap;
-                    }
-                }
-
-                if collision {
-                    penalty = min_overlap.mul_add(min_overlap, penalty);
-                }
+/// Matches SciPy's numerical gradient calculation (Forward Difference)
+fn local_min(
+    x0: &[f64], s: f64, args: &Args, geo: &Geometry,
+) -> Option<Vec<f64>> {
+    let mut x = x0.to_vec();
+    let obj = |xx: &[f64], grad: Option<&mut [f64]>, _: &mut ()| -> f64 {
+        let f0 = penalty(xx, s, args, geo);
+        if let Some(g) = grad {
+            // SciPy uses a small epsilon relative to the scale of the value
+            let eps = f64::EPSILON.sqrt();
+            let mut x_tmp = xx.to_vec();
+            for i in 0..xx.len() {
+                let step = eps * (1.0 + xx[i].abs());
+                x_tmp[i] += step;
+                let f1 = penalty(&x_tmp, s, args, geo);
+                g[i] = (f1 - f0) / step;
+                x_tmp[i] = xx[i]; // Reset for next dimension
             }
         }
-
-        penalty
-    }
-}
-
-impl<'a> CostFunction for BHProblem<'a> {
-    type Param = Vec<FloatType>;
-    type Output = FloatType;
-
-    fn cost(&self, param: &Self::Param) -> Result<Self::Output, Error> {
-        Ok(self.bh_function(param.as_slice()))
-    }
-}
-
-impl<'a> Gradient for BHProblem<'a> {
-    type Param = Vec<FloatType>;
-    type Gradient = Vec<FloatType>;
-
-    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, Error> {
-        let n = param.len();
-        let mut grad = vec![0.0 as FloatType; n];
-        let eps = FloatType::EPSILON.sqrt();
-        let mut xp = param.clone();
-        let mut xm = param.clone();
-        for i in 0..n {
-            let xi = param[i];
-            let h = eps * xi.abs().max(1.0 as FloatType);
-            xp[i] = xi + h;
-            xm[i] = xi - h;
-            let fp = self.bh_function(xp.as_slice());
-            let fm = self.bh_function(xm.as_slice());
-            grad[i] = (fp - fm) / (2.0 as FloatType * h);
-            xp[i] = xi;
-            xm[i] = xi;
-        }
-        Ok(grad)
-    }
-}
-
-fn initial_simplex(x0: &[FloatType]) -> Vec<Vec<FloatType>> {
-    let n = x0.len();
-    let mut simplex: Vec<Vec<FloatType>> = Vec::with_capacity(n + 1);
-    simplex.push(x0.to_owned());
-    for i in 0..n {
-        let mut xi = x0.to_owned();
-        let delta = (0.05 as FloatType) * (1.0 as FloatType + x0[i].abs());
-        xi[i] += delta;
-        simplex.push(xi);
-    }
-    simplex
-}
-
-// def repetition(seed):
-#[allow(clippy::too_many_arguments)]
-fn repetition(
-    seed: usize, n: usize, nsi: usize, nsc: usize,
-    penalty_tolerance: FloatType, final_step_size: FloatType,
-    unit_polygon_vertices: &Array2<FloatType>,
-    unit_polygon_vectors: &Array2<FloatType>,
-    unit_container_vectors: &Array2<FloatType>,
-    unit_container_apothem: FloatType,
-) -> (FloatType, Vec<FloatType>) {
-    println!("Attempt {}", seed);
-
-    let mut rng = PcgInnerState64::mcg_seeded(seed as _);
-    let rand01 = |rng: &mut PcgInnerState64| {
-        let hi = rng.mcg_xsh_rs();
-        let lo = rng.mcg_xsh_rs();
-        let rand = ((hi as u64) << 32) | lo as u64;
-        rand as FloatType / (u64::MAX as FloatType)
+        f0
     };
-    let mut dynamic_s = (n as FloatType).sqrt()
-        * (2.0 as FloatType + rand01(&mut rng) * 2.0 as FloatType);
-    let initial_s = dynamic_s;
 
-    let mut x0 = vec![0.0 as FloatType; n * 3];
+    let mut opt =
+        Nlopt::new(Algorithm::Lbfgs, x0.len(), obj, Target::Minimize, ());
 
-    if rand01(&mut rng) < 0.5 {
-        for item in x0.iter_mut().take(n * 3) {
-            *item = (rand01(&mut rng) - 0.5 as FloatType) * dynamic_s;
-        }
-    } else {
-        let grid_count = ((n as FloatType).sqrt().ceil()) as usize;
-        let min = -dynamic_s / (2.0 as FloatType) * (0.9 as FloatType);
-        let max = dynamic_s / (2.0 as FloatType) * (0.9 as FloatType);
-        let mut grid_points: Vec<(FloatType, FloatType)> =
-            Vec::with_capacity(grid_count * grid_count);
-        for gy in 0..grid_count {
-            for gx in 0..grid_count {
-                let xi = if grid_count > 1 {
-                    (gx as FloatType).mul_add(
-                        (max - min) / ((grid_count - 1) as FloatType),
-                        min,
-                    )
-                } else {
-                    (min + max) / (2.0 as FloatType)
-                };
-                let yi = if grid_count > 1 {
-                    (gy as FloatType).mul_add(
-                        (max - min) / ((grid_count - 1) as FloatType),
-                        min,
-                    )
-                } else {
-                    (min + max) / (2.0 as FloatType)
-                };
-                grid_points.push((xi, yi));
-            }
-        }
-        for i in 0..n {
-            let (gx, gy) = grid_points[i % grid_points.len()];
-            x0[i * 3] = gx;
-            x0[i * 3 + 1] = gy;
-            x0[i * 3 + 2] = rand01(&mut rng) * (2.0 as FloatType) * PI;
-        }
+    // Mapping SciPy's 'tol' to NLopt tolerances
+    opt.set_ftol_rel(args.tolerance).ok();
+    opt.set_xtol_rel(args.tolerance).ok();
+    opt.set_maxeval(5000).ok(); // Standard limit to prevent infinite loops
+
+    match opt.optimize(&mut x) {
+        Ok(_) => Some(x),
+        Err(_) => None,
     }
+}
 
-    let mut last_valid_x = x0.clone();
-    let mut last_valid_s = dynamic_s;
+fn verify_results(v: &[f64], s: f64, args: &Args, geo: &Geometry) {
+    println!("--- Verification Pass ---");
+    let limit = geo.apothem * s;
+    let mut overlap_count = 0;
+    let mut out_of_bounds = 0;
 
-    // Match Python's local-minimizer `tol=1e-8` used in `minimize(...,
-    // tol=1e-8)`
-    let solver_tol: FloatType = 1e-8 as FloatType;
+    let polys: Vec<_> = (0..args.inner_polygons)
+        .map(|i| {
+            let (pos, rot) = (
+                Vector2::new(v[i * 3], v[i * 3 + 1]),
+                Rotation2::new(v[i * 3 + 2]),
+            );
+            (
+                geo.inner_verts
+                    .iter()
+                    .map(|&iv| rot * iv + pos)
+                    .collect::<Vec<_>>(),
+                geo.inner_axes
+                    .iter()
+                    .map(|&ia| rot * ia)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
 
-    loop {
-        // Local minimization using L-BFGS (match Python's L-BFGS-B)
-        let problem = BHProblem {
-            n,
-            nsi,
-            nsc,
-            unit_polygon_vertices,
-            unit_polygon_vectors,
-            unit_container_vectors,
-            unit_container_apothem,
-            s: dynamic_s,
-        };
-
-        let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
-        let linesearch = BacktrackingLineSearch::new(armijo);
-        let lbfgs = LBFGS::new(linesearch, 3)
-            .with_tolerance_grad(solver_tol)
-            .unwrap()
-            .with_tolerance_cost(solver_tol)
-            .unwrap();
-
-        let result = Executor::new(problem, lbfgs)
-            .configure(|state| state.param(x0.clone()))
-            .run();
-
-        let mut success = false;
-        if let Ok(res) = result {
-            let fun = res.state.get_best_cost();
-            if fun < penalty_tolerance {
-                if let Some(param) = res.state.get_best_param() {
-                    last_valid_x.clone_from(param);
-                    last_valid_s = dynamic_s;
-                    success = true;
-                    // compute multiplier (match Python exactly)
-                    let base = (n as FloatType).sqrt() * (nsi as FloatType)
-                        / (nsc as FloatType);
-                    let mut multiplier = 0.9999 as FloatType
-                        - (dynamic_s - base) * (0.0099 as FloatType)
-                            / (initial_s - base);
-                    multiplier = (dynamic_s - base).mul_add(
-                        -((0.01 as FloatType - final_step_size)
-                            / (initial_s - base)),
-                        1.0 as FloatType - final_step_size,
-                    );
-                    for i in 0..x0.len() {
-                        x0[i] = param[i] * multiplier;
-                    }
-                    dynamic_s *= multiplier;
-                }
-            } else {
-                // Basinhopping-like global search (many local starts)
-                let mut best_bh_fun = fun;
-                let mut best_bh_param =
-                    res.state.get_best_param().cloned().unwrap_or(x0.clone());
-                let mut current_fun = fun;
-                let mut current_param =
-                    res.state.get_best_param().cloned().unwrap_or(x0.clone());
-
-                for _ in 0..50 {
-                    let mut trial = current_param.clone();
-                    for item in &mut trial {
-                        *item = ((rand01(&mut rng) - 0.5 as FloatType)
-                            * (2.0 as FloatType))
-                            .mul_add(0.1 as FloatType, *item);
-                    }
-                    let problem = BHProblem {
-                        n,
-                        nsi,
-                        nsc,
-                        unit_polygon_vertices,
-                        unit_polygon_vectors,
-                        unit_container_vectors,
-                        unit_container_apothem,
-                        s: dynamic_s,
-                    };
-                    let armijo =
-                        ArmijoCondition::<FloatType>::new(0.0001).unwrap();
-                    let linesearch = BacktrackingLineSearch::new(armijo);
-                    let lbfgs = LBFGS::new(linesearch, 3)
-                        .with_tolerance_grad(solver_tol)
-                        .unwrap()
-                        .with_tolerance_cost(solver_tol)
-                        .unwrap();
-                    if let Ok(res2) = Executor::new(problem, lbfgs)
-                        .configure(|state| state.param(trial.clone()))
-                        .run()
-                    {
-                        let f2 = res2.state.get_best_cost();
-                        if f2 < best_bh_fun {
-                            best_bh_fun = f2;
-                            best_bh_param = res2
-                                .state
-                                .get_best_param()
-                                .cloned()
-                                .unwrap_or(trial.clone());
-                        }
-                        // Metropolis acceptance
-                        if f2 < current_fun
-                            || ((current_fun - f2) / (0.1 as FloatType)).exp()
-                                > rand01(&mut rng)
-                        {
-                            current_fun = f2;
-                            current_param = res2
-                                .state
-                                .get_best_param()
-                                .cloned()
-                                .unwrap_or(trial.clone());
-                        }
-                    }
-                }
-
-                if best_bh_fun < penalty_tolerance {
-                    last_valid_x.clone_from(&best_bh_param);
-                    last_valid_s = dynamic_s;
-                    let base = (n as FloatType).sqrt() * (nsi as FloatType)
-                        / (nsc as FloatType);
-                    let mut multiplier = 0.9999 as FloatType
-                        - (dynamic_s - base) * (0.0099 as FloatType)
-                            / (initial_s - base);
-                    multiplier = (dynamic_s - base).mul_add(
-                        -((0.01 as FloatType - final_step_size)
-                            / (initial_s - base)),
-                        1.0 as FloatType - final_step_size,
-                    );
-                    for i in 0..x0.len() {
-                        x0[i] = last_valid_x[i] * multiplier;
-                    }
-                    dynamic_s *= multiplier;
-                    success = true;
-                } else {
+    for (i, verts) in polys.iter().map(|x| &x.0).enumerate() {
+        if verts
+            .iter()
+            .any(|pt| geo.cont_axes.iter().any(|ax| pt.dot(ax) > limit + 1e-9))
+        {
+            out_of_bounds += 1;
+        }
+        for (j, ()) in polys.iter().map(|_x| ()).enumerate().skip(i + 1) {
+            let mut collision = true;
+            for ax in polys[i].1.iter().chain(polys[j].1.iter()) {
+                let (min1, max1) = project(&polys[i].0, ax);
+                let (min2, max2) = project(&polys[j].0, ax);
+                if max1.min(max2) - min1.max(min2) <= 1e-9 {
+                    collision = false;
                     break;
                 }
             }
-        } else {
-            // If local solver failed for any reason, try a few random local
-            // starts
-            let mut found = false;
-            for _ in 0..10 {
-                let mut trial = x0.clone();
-                for item in &mut trial {
-                    *item = ((rand01(&mut rng) - 0.5 as FloatType) * dynamic_s)
-                        .mul_add(0.1 as FloatType, *item);
-                }
-                let problem = BHProblem {
-                    n,
-                    nsi,
-                    nsc,
-                    unit_polygon_vertices,
-                    unit_polygon_vectors,
-                    unit_container_vectors,
-                    unit_container_apothem,
-                    s: dynamic_s,
-                };
-                let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
-                let linesearch = BacktrackingLineSearch::new(armijo);
-                let lbfgs = LBFGS::new(linesearch, 3)
-                    .with_tolerance_grad(solver_tol)
-                    .unwrap()
-                    .with_tolerance_cost(solver_tol)
-                    .unwrap();
-                if let Ok(res2) = Executor::new(problem, lbfgs)
-                    .configure(|state| state.param(trial.clone()))
-                    .run()
-                {
-                    let f2 = res2.state.get_best_cost();
-                    if f2 < penalty_tolerance {
-                        last_valid_x = res2
-                            .state
-                            .get_best_param()
-                            .cloned()
-                            .unwrap_or(trial.clone());
-                        last_valid_s = dynamic_s;
-                        x0 = last_valid_x.clone();
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if !found {
-                break;
+            if collision {
+                overlap_count += 1;
             }
         }
+    }
+    println!(
+        "Out of bounds: {}, Pairwise overlaps: {}",
+        out_of_bounds, overlap_count
+    );
+}
 
-        if !success {
-            break;
+fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
+    let mut rng = PcgInnerState64::mcg_seeded(seed as u64);
+    let mut rand = || {
+        (((rng.mcg_xsh_rs() as u64) << 32) | rng.mcg_xsh_rs() as u64) as f64
+            / u64::MAX as f64
+    };
+    let mut s = (args.inner_polygons as f64).sqrt() * (2.0 + rand() * 2.0);
+    let initial_s = s;
+    let mut x = vec![0.0; args.inner_polygons * 3];
+
+    if rand() < 0.5 {
+        x.iter_mut().for_each(|v| *v = (rand() - 0.5) * s);
+    } else {
+        let gc = (args.inner_polygons as f64).sqrt().ceil() as usize;
+        let span = s * 0.45;
+        for i in 0..args.inner_polygons {
+            x[i * 3] = if gc > 1 {
+                (i % gc) as f64 * (2.0 * span / (gc - 1) as f64) - span
+            } else {
+                0.0
+            };
+            x[i * 3 + 1] = if gc > 1 {
+                (i / gc) as f64 * (2.0 * span / (gc - 1) as f64) - span
+            } else {
+                0.0
+            };
+            x[i * 3 + 2] = rand() * 2.0 * PI;
         }
     }
 
-    (last_valid_s, last_valid_x)
+    let (mut last_x, mut last_s) = (x.clone(), s);
+    loop {
+        if let Some(refined) = local_min(&x, s, args, geo) {
+            let p = penalty(&refined, s, args, geo);
+            if p < args.tolerance {
+                last_x = refined.clone();
+                last_s = s;
+                let base = (args.inner_polygons as f64).sqrt()
+                    * args.inner_sides as f64
+                    / args.container_sides as f64;
+                let m = (s - base).mul_add(
+                    -((0.01 - args.finalstep) / (initial_s - base)),
+                    1.0 - args.finalstep,
+                );
+                x = refined.iter().map(|v| v * m).collect();
+                s *= m;
+                continue;
+            }
+            if let Some(bh) = run_bh(&refined, p, s, args, geo, &mut rand) {
+                last_x = bh.clone();
+                last_s = s;
+                let base = (args.inner_polygons as f64).sqrt()
+                    * args.inner_sides as f64
+                    / args.container_sides as f64;
+                let m = (s - base).mul_add(
+                    -((0.01 - args.finalstep) / (initial_s - base)),
+                    1.0 - args.finalstep,
+                );
+                x = bh.iter().map(|v| v * m).collect();
+                s *= m;
+                continue;
+            }
+        }
+        break;
+    }
+    (last_s, last_x)
+}
+
+fn run_bh(
+    refined: &[f64], p: f64, s: f64, args: &Args, geo: &Geometry,
+    rand: &mut dyn FnMut() -> f64,
+) -> Option<Vec<f64>> {
+    let (mut best_p, mut best_x) = (p, refined.to_vec());
+    let (mut cur_p, mut cur_x) = (p, refined.to_vec());
+    for _ in 0..50 {
+        let trial: Vec<_> =
+            cur_x.iter().map(|&v| v + (rand() - 0.5) * 0.2).collect();
+        if let Some(opt_x) = local_min(&trial, s, args, geo) {
+            let opt_p = penalty(&opt_x, s, args, geo);
+            if opt_p < best_p {
+                best_p = opt_p;
+                best_x = opt_x.clone();
+            }
+            if opt_p < cur_p || ((cur_p - opt_p) / 0.1).exp() > rand() {
+                cur_p = opt_p;
+                cur_x = opt_x;
+            }
+            if best_p < args.tolerance {
+                return Some(best_x);
+            }
+        }
+    }
+    None
+}
+
+fn render(args: &Args, geo: &Geometry, s: f64, v: &[f64]) {
+    let path = format!(
+        "{}_{}_in_{}.png",
+        args.inner_polygons, args.inner_sides, args.container_sides
+    );
+    let root = BitMapBackend::new(&path, (1024, 1024)).into_drawing_area();
+    root.fill(&WHITE).ok();
+    let mut chart = ChartBuilder::on(&root)
+        .build_cartesian_2d(-s..s, -s..s)
+        .unwrap();
+
+    let mut c_pts: Vec<_> = (0..args.container_sides)
+        .map(|i| {
+            let a = i as f64 * (2.0 * PI / args.container_sides as f64);
+            (a.cos() * s, a.sin() * s)
+        })
+        .collect();
+    c_pts.push(c_pts[0]); // Close outline
+    chart
+        .draw_series(std::iter::once(PathElement::new(c_pts, BLACK)))
+        .ok();
+
+    for i in 0..args.inner_polygons {
+        let (pos, rot) = (
+            Vector2::new(v[i * 3], v[i * 3 + 1]),
+            Rotation2::new(v[i * 3 + 2]),
+        );
+        let mut p_pts: Vec<_> = geo
+            .inner_verts
+            .iter()
+            .map(|&iv| {
+                let p = rot * iv + pos;
+                (p.x, p.y)
+            })
+            .collect();
+        chart
+            .draw_series(std::iter::once(Polygon::new(
+                p_pts.clone(),
+                RGBColor(204, 204, 204).filled(),
+            )))
+            .ok();
+        p_pts.push(p_pts[0]); // Close outline
+        chart
+            .draw_series(std::iter::once(PathElement::new(p_pts, BLACK)))
+            .ok();
+    }
 }
