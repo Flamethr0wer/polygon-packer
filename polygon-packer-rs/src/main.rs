@@ -18,10 +18,6 @@ use clap::Parser;
 use ndarray::Array2;
 use plotters::prelude::*;
 use rayon::prelude::*;
-use std::cell::RefCell;
-use std::rc::Rc;
-use bumpalo::Bump;
-use bumpalo::collections::Vec as BumpVec;
 use voxell_rng::rng::pcg_advanced::pcg_64::PcgInnerState64;
 
 #[derive(Parser, Debug)]
@@ -313,9 +309,10 @@ fn transform_polygon(
 
 
 
-// BHProblem struct must be declared before its impl. It holds arena-backed
-// scratch buffers to avoid transient allocations during cost evaluation.
-struct BHProblem<'a, 'b> {
+// BHProblem struct holds problem data used during cost evaluation.
+// To reduce memory pressure we compute transformed vertices and axes
+// on-the-fly instead of storing arena-backed scratch buffers.
+struct BHProblem<'a> {
     N: usize,
     nsi: usize,
     nsc: usize,
@@ -324,17 +321,12 @@ struct BHProblem<'a, 'b> {
     unit_container_vectors: &'a Array2<FloatType>,
     unit_container_apothem: FloatType,
     S: FloatType,
-    arena: &'b Bump,
-    polys_x: Rc<RefCell<BumpVec<'b, FloatType>>>,
-    polys_y: Rc<RefCell<BumpVec<'b, FloatType>>>,
-    vecs_x: Rc<RefCell<BumpVec<'b, FloatType>>>,
-    vecs_y: Rc<RefCell<BumpVec<'b, FloatType>>>,
 }
 
 // BH cost evaluation implemented as a method on the problem struct.
 // Use a bump arena and SoA scratch buffers (polys_x/polys_y, vecs_x/vecs_y)
 // to reduce transient heap allocations and improve data locality.
-impl<'a, 'b> BHProblem<'a, 'b> {
+impl<'a> BHProblem<'a> {
     fn bh_function(&self, values: &[FloatType]) -> FloatType {
         const HUGE: FloatType = 1e20 as FloatType;
 
@@ -346,25 +338,7 @@ impl<'a, 'b> BHProblem<'a, 'b> {
 
         let mut penalty: FloatType = 0.0;
 
-        // Reusable, arena-allocated SoA buffers.
-        let mut polys_x = self.polys_x.borrow_mut();
-        let mut polys_y = self.polys_y.borrow_mut();
-        let mut vecs_x = self.vecs_x.borrow_mut();
-        let mut vecs_y = self.vecs_y.borrow_mut();
-
-        polys_x.clear();
-        polys_y.clear();
-        vecs_x.clear();
-        vecs_y.clear();
-
-        // Reserve expected capacity to avoid repeated grows
-        let total_points = (self.N as usize) * (n_vertices as usize);
-        polys_x.reserve(total_points);
-        polys_y.reserve(total_points);
-        vecs_x.reserve(total_points);
-        vecs_y.reserve(total_points);
-
-        // Fill transformed polygon coordinates and rotated edge vectors.
+        // Compute transformed vertices on-the-fly and apply container penalty.
         for i in 0..self.N {
             let posx = values[i * 3];
             let posy = values[i * 3 + 1];
@@ -377,10 +351,7 @@ impl<'a, 'b> BHProblem<'a, 'b> {
                 let vy = self.unit_polygon_vertices[[v, 1]];
                 let px = posx + (vx * ca - vy * sa);
                 let py = posy + (vx * sa + vy * ca);
-                polys_x.push(px);
-                polys_y.push(py);
 
-                // poking penalty against container
                 for ci in 0..nsc {
                     let dvx = self.unit_container_vectors[[ci, 0]];
                     let dvy = self.unit_container_vectors[[ci, 1]];
@@ -391,39 +362,47 @@ impl<'a, 'b> BHProblem<'a, 'b> {
                     }
                 }
             }
-
-            for v in 0..n_vertices {
-                let vx = self.unit_polygon_vectors[[v, 0]];
-                let vy = self.unit_polygon_vectors[[v, 1]];
-                vecs_x.push(vx * ca - vy * sa);
-                vecs_y.push(vx * sa + vy * ca);
-            }
         }
 
-        // Pairwise separating axis test using SoA buffers
+        // Pairwise separating axis test: compute axes and projections on-the-fly
         for i in 0..self.N {
+            let posx_i = values[i * 3];
+            let posy_i = values[i * 3 + 1];
+            let rot_i = values[i * 3 + 2];
+            let ca_i = rot_i.cos();
+            let sa_i = rot_i.sin();
+
             for j in (i + 1)..self.N {
+                let posx_j = values[j * 3];
+                let posy_j = values[j * 3 + 1];
+                let rot_j = values[j * 3 + 2];
+                let ca_j = rot_j.cos();
+                let sa_j = rot_j.sin();
+
                 let mut collision = true;
                 let mut min_overlap: FloatType = HUGE;
 
                 for vec_idx in 0..(nsi * 2) {
                     let (x_axis, y_axis) = if vec_idx < nsi {
-                        (
-                            vecs_x[i * nsi + vec_idx],
-                            vecs_y[i * nsi + vec_idx],
-                        )
+                        let v = vec_idx;
+                        let ux = self.unit_polygon_vectors[[v, 0]];
+                        let uy = self.unit_polygon_vectors[[v, 1]];
+                        (ux * ca_i - uy * sa_i, ux * sa_i + uy * ca_i)
                     } else {
-                        (
-                            vecs_x[j * nsi + (vec_idx - nsi)],
-                            vecs_y[j * nsi + (vec_idx - nsi)],
-                        )
+                        let v = vec_idx - nsi;
+                        let ux = self.unit_polygon_vectors[[v, 0]];
+                        let uy = self.unit_polygon_vectors[[v, 1]];
+                        (ux * ca_j - uy * sa_j, ux * sa_j + uy * ca_j)
                     };
 
                     let mut min_1 = HUGE;
                     let mut max_1 = -HUGE;
                     for vert in 0..nsi {
-                        let dotp = polys_x[i * nsi + vert] * x_axis
-                            + polys_y[i * nsi + vert] * y_axis;
+                        let vx = self.unit_polygon_vertices[[vert, 0]];
+                        let vy = self.unit_polygon_vertices[[vert, 1]];
+                        let px = posx_i + (vx * ca_i - vy * sa_i);
+                        let py = posy_i + (vx * sa_i + vy * ca_i);
+                        let dotp = px * x_axis + py * y_axis;
                         if dotp < min_1 {
                             min_1 = dotp;
                         }
@@ -435,8 +414,11 @@ impl<'a, 'b> BHProblem<'a, 'b> {
                     let mut min_2 = HUGE;
                     let mut max_2 = -HUGE;
                     for vert in 0..nsi {
-                        let dotp = polys_x[j * nsi + vert] * x_axis
-                            + polys_y[j * nsi + vert] * y_axis;
+                        let vx = self.unit_polygon_vertices[[vert, 0]];
+                        let vy = self.unit_polygon_vertices[[vert, 1]];
+                        let px = posx_j + (vx * ca_j - vy * sa_j);
+                        let py = posy_j + (vx * sa_j + vy * ca_j);
+                        let dotp = px * x_axis + py * y_axis;
                         if dotp < min_2 {
                             min_2 = dotp;
                         }
@@ -468,7 +450,7 @@ impl<'a, 'b> BHProblem<'a, 'b> {
 
 
 
-impl<'a, 'b> CostFunction for BHProblem<'a, 'b> {
+impl<'a> CostFunction for BHProblem<'a> {
     type Param = Vec<FloatType>;
     type Output = FloatType;
 
@@ -477,7 +459,7 @@ impl<'a, 'b> CostFunction for BHProblem<'a, 'b> {
     }
 }
 
-impl<'a, 'b> Gradient for BHProblem<'a, 'b> {
+impl<'a> Gradient for BHProblem<'a> {
     type Param = Vec<FloatType>;
     type Gradient = Vec<FloatType>;
 
@@ -582,14 +564,6 @@ fn repetition(
     // Match Python's local-minimizer `tol=1e-8` used in `minimize(..., tol=1e-8)`
     let solver_tol: FloatType = 1e-8 as FloatType;
 
-    // Single arena reused for all BHProblem evaluations in this repetition.
-    let arena = Bump::new();
-    // Reusable arena-backed scratch buffers (wrapped in RefCell for interior mutability)
-    let polys_x = Rc::new(RefCell::new(BumpVec::new_in(&arena)));
-    let polys_y = Rc::new(RefCell::new(BumpVec::new_in(&arena)));
-    let vecs_x = Rc::new(RefCell::new(BumpVec::new_in(&arena)));
-    let vecs_y = Rc::new(RefCell::new(BumpVec::new_in(&arena)));
-
     loop {
         // Local minimization using L-BFGS (match Python's L-BFGS-B)
         let problem = BHProblem {
@@ -601,11 +575,6 @@ fn repetition(
             unit_container_vectors,
             unit_container_apothem,
             S: dynamic_S,
-            arena: &arena,
-            polys_x: polys_x.clone(),
-            polys_y: polys_y.clone(),
-            vecs_x: vecs_x.clone(),
-            vecs_y: vecs_y.clone(),
         };
 
         let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
@@ -664,11 +633,6 @@ fn repetition(
                         unit_container_vectors,
                         unit_container_apothem,
                         S: dynamic_S,
-                        arena: &arena,
-                        polys_x: polys_x.clone(),
-                        polys_y: polys_y.clone(),
-                        vecs_x: vecs_x.clone(),
-                        vecs_y: vecs_y.clone(),
                     };
                     let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
                     let linesearch = BacktrackingLineSearch::new(armijo);
@@ -741,11 +705,6 @@ fn repetition(
                     unit_container_vectors,
                     unit_container_apothem,
                     S: dynamic_S,
-                    arena: &arena,
-                    polys_x: polys_x.clone(),
-                    polys_y: polys_y.clone(),
-                    vecs_x: vecs_x.clone(),
-                    vecs_y: vecs_y.clone(),
                 };
                 let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
                 let linesearch = BacktrackingLineSearch::new(armijo);
