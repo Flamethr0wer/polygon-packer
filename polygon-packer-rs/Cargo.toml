@@ -44,13 +44,13 @@ panic = "abort"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-cargo = { level = "warn", priority = -1 }
+cargo = { level = "allow", priority = -1 }
 restriction = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 
 mod_module_files = "deny"
 self_named_module_files = "allow"
-
+doc_paragraphs_missing_punctuation = "allow"
 allow_attributes = "allow"
 allow_attributes_without_reason = "allow"
 arithmetic_side_effects = "allow"

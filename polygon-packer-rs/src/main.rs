@@ -5,6 +5,9 @@ extern crate plotters;
 extern crate rayon;
 
 mod rust_specific;
+use std::cmp::min;
+use std::iter;
+
 use rust_specific::AssocPI;
 use rust_specific::FloatType;
 // this is π in either f32 or f64
@@ -48,7 +51,7 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let N = args.inner_polygons;
+    let n = args.inner_polygons;
     let nsi = args.inner_sides;
     let nsc = args.container_sides;
     let attempts = args.attempts;
@@ -117,7 +120,7 @@ fn main() {
     // unit_container_apothem = np.cos(np.pi / nsc)
     let unit_container_apothem: FloatType = (PI / (nsc as FloatType)).cos();
 
-    let mut best_S: FloatType = FloatType::INFINITY;
+    let mut best_s: FloatType = FloatType::INFINITY;
     let mut best_values: Option<Vec<FloatType>> = None;
 
     // results = Parallel(n_jobs=-1, prefer="processes")(delayed(repetition)(i)
@@ -127,7 +130,7 @@ fn main() {
         .map(|i| {
             repetition(
                 i,
-                N,
+                n,
                 nsi,
                 nsc,
                 penalty_tolerance,
@@ -141,8 +144,8 @@ fn main() {
         .collect();
 
     for (s, values) in results {
-        if s < best_S {
-            best_S = s;
+        if s < best_s {
+            best_s = s;
             best_values = Some(values);
         }
     }
@@ -150,7 +153,7 @@ fn main() {
     println!(
         "Final side length: {}",
         // best_S * np.sin(np.pi / nsc) / np.sin(np.pi / nsi),
-        best_S * (PI / (nsc as FloatType)).sin()
+        best_s * (PI / (nsc as FloatType)).sin()
             / (PI / (nsi as FloatType)).sin(),
     );
 
@@ -163,20 +166,19 @@ fn main() {
     // implementation and remove this note, I'd be very glad.
 
     if let Some(vals) = best_values {
-        if vals.len() == N * 3 {
-            let positions =
-                Array2::from_shape_vec((N, 3), vals.clone()).unwrap();
+        if vals.len() == n * 3 {
+            let positions = Array2::from_shape_vec((n, 3), vals).unwrap();
             println!("Final positions (first 5 rows):");
-            for i in 0..std::cmp::min(5, N) {
+            for i in 0..min(5, n) {
                 println!("  {}: {:?}", i, positions.row(i));
             }
 
             // Plot result to PNG using Plotters (match Python output)
-            let file_name = format!("{}_{}_in_{}.png", N, nsi, nsc);
+            let file_name = format!("{}_{}_in_{}.png", n, nsi, nsc);
             // collect polygon points and container points (as f64)
             let mut all_points: Vec<(f64, f64)> = Vec::new();
-            let mut polys: Vec<Vec<(f64, f64)>> = Vec::with_capacity(N);
-            for i in 0..N {
+            let mut polys: Vec<Vec<(f64, f64)>> = Vec::with_capacity(n);
+            for i in 0..n {
                 let x = positions[[i, 0]];
                 let y = positions[[i, 1]];
                 let a = positions[[i, 2]];
@@ -189,7 +191,7 @@ fn main() {
                     pts.push((px, py));
                     all_points.push((px, py));
                 }
-                if let Some(first) = pts.get(0).cloned() {
+                if let Some(first) = pts.first().copied() {
                     pts.push(first);
                     all_points.push(first);
                 }
@@ -199,22 +201,22 @@ fn main() {
             let mut container_pts: Vec<(f64, f64)> =
                 Vec::with_capacity(unit_container_vertices.shape()[0] + 1);
             for i in 0..unit_container_vertices.shape()[0] {
-                let cx = unit_container_vertices[[i, 0]] * best_S;
-                let cy = unit_container_vertices[[i, 1]] * best_S;
+                let cx = unit_container_vertices[[i, 0]] * best_s;
+                let cy = unit_container_vertices[[i, 1]] * best_s;
                 container_pts.push((cx as f64, cy as f64));
                 all_points.push((cx as f64, cy as f64));
             }
-            if let Some(first) = container_pts.get(0).cloned() {
+            if let Some(first) = container_pts.first().copied() {
                 container_pts.push(first);
                 all_points.push(first);
             }
 
             // determine bounds and padding
             let (mut min_x, mut max_x, mut min_y, mut max_y) = (
-                std::f64::INFINITY,
-                std::f64::NEG_INFINITY,
-                std::f64::INFINITY,
-                std::f64::NEG_INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
             );
             for (x, y) in &all_points {
                 if *x < min_x {
@@ -242,8 +244,8 @@ fn main() {
             let dx = x_max_tick - x_min_tick;
             let dy = y_max_tick - y_min_tick;
             let span = dx.max(dy);
-            let x_center = (x_min_tick + x_max_tick) / 2.0;
-            let y_center = (y_min_tick + y_max_tick) / 2.0;
+            let x_center = f64::midpoint(y_min_tick, y_max_tick);
+            let y_center = f64::midpoint(y_min_tick, y_max_tick);
             let x_min_eq = x_center - span / 2.0;
             let x_max_eq = x_center + span / 2.0;
             let y_min_eq = y_center - span / 2.0;
@@ -258,7 +260,7 @@ fn main() {
                 .caption(
                     format!(
                         "Side length: {}",
-                        best_S * (PI / (nsc as FloatType)).sin()
+                        best_s * (PI / (nsc as FloatType)).sin()
                             / (PI / (nsi as FloatType)).sin()
                     ),
                     ("sans-serif", 20).into_font(),
@@ -282,9 +284,9 @@ fn main() {
 
             // draw container outline
             chart
-                .draw_series(std::iter::once(PathElement::new(
+                .draw_series(iter::once(PathElement::new(
                     container_pts.clone(),
-                    &BLACK,
+                    BLACK,
                 )))
                 .ok();
 
@@ -293,15 +295,13 @@ fn main() {
                 let fill_style =
                     Into::<ShapeStyle>::into(&RGBColor(204, 204, 204)).filled();
                 chart
-                    .draw_series(std::iter::once(Polygon::new(
+                    .draw_series(iter::once(Polygon::new(
                         poly.clone(),
                         fill_style,
                     )))
                     .ok();
                 chart
-                    .draw_series(std::iter::once(PathElement::new(
-                        poly, &BLACK,
-                    )))
+                    .draw_series(iter::once(PathElement::new(poly, BLACK)))
                     .ok();
             }
 
@@ -324,8 +324,8 @@ fn transform_polygon(
     for i in 0..n_vertices {
         let vx = vertices[[i, 0]];
         let vy = vertices[[i, 1]];
-        transformed[i * 2] = x + (vx * ca - vy * sa);
-        transformed[i * 2 + 1] = y + (vx * sa + vy * ca);
+        transformed[i * 2] = x + vy.mul_add(-sa, vx * ca);
+        transformed[i * 2 + 1] = y + vy.mul_add(ca, vx * sa);
     }
     transformed
 }
@@ -334,14 +334,14 @@ fn transform_polygon(
 // To reduce memory pressure we compute transformed vertices and axes
 // on-the-fly instead of storing arena-backed scratch buffers.
 struct BHProblem<'a> {
-    N: usize,
+    n: usize,
     nsi: usize,
     nsc: usize,
     unit_polygon_vertices: &'a Array2<FloatType>,
     unit_polygon_vectors: &'a Array2<FloatType>,
     unit_container_vectors: &'a Array2<FloatType>,
     unit_container_apothem: FloatType,
-    S: FloatType,
+    s: FloatType,
 }
 
 // BH cost evaluation implemented as a method on the problem struct.
@@ -355,12 +355,12 @@ impl<'a> BHProblem<'a> {
         let nsi = self.nsi;
         let nsc = self.nsc;
 
-        let limit = self.unit_container_apothem * self.S;
+        let limit = self.unit_container_apothem * self.s;
 
         let mut penalty: FloatType = 0.0;
 
         // Compute transformed vertices on-the-fly and apply container penalty.
-        for i in 0..self.N {
+        for i in 0..self.n {
             let posx = values[i * 3];
             let posy = values[i * 3 + 1];
             let rot = values[i * 3 + 2];
@@ -387,14 +387,14 @@ impl<'a> BHProblem<'a> {
 
         // Pairwise separating axis test: compute axes and projections
         // on-the-fly
-        for i in 0..self.N {
+        for i in 0..self.n {
             let posx_i = values[i * 3];
             let posy_i = values[i * 3 + 1];
             let rot_i = values[i * 3 + 2];
             let ca_i = rot_i.cos();
             let sa_i = rot_i.sin();
 
-            for j in (i + 1)..self.N {
+            for j in (i + 1)..self.n {
                 let posx_j = values[j * 3];
                 let posy_j = values[j * 3 + 1];
                 let rot_j = values[j * 3 + 2];
@@ -586,14 +586,14 @@ fn repetition(
     loop {
         // Local minimization using L-BFGS (match Python's L-BFGS-B)
         let problem = BHProblem {
-            N,
+            n: N,
             nsi,
             nsc,
             unit_polygon_vertices,
             unit_polygon_vectors,
             unit_container_vectors,
             unit_container_apothem,
-            S: dynamic_S,
+            s: dynamic_S,
         };
 
         let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
@@ -649,14 +649,14 @@ fn repetition(
                             * (0.1 as FloatType);
                     }
                     let problem = BHProblem {
-                        N,
+                        n: N,
                         nsi,
                         nsc,
                         unit_polygon_vertices,
                         unit_polygon_vectors,
                         unit_container_vectors,
                         unit_container_apothem,
-                        S: dynamic_S,
+                        s: dynamic_S,
                     };
                     let armijo =
                         ArmijoCondition::<FloatType>::new(0.0001).unwrap();
@@ -728,14 +728,14 @@ fn repetition(
                         * 0.1 as FloatType;
                 }
                 let problem = BHProblem {
-                    N,
+                    n: N,
                     nsi,
                     nsc,
                     unit_polygon_vertices,
                     unit_polygon_vectors,
                     unit_container_vectors,
                     unit_container_apothem,
-                    S: dynamic_S,
+                    s: dynamic_S,
                 };
                 let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
                 let linesearch = BacktrackingLineSearch::new(armijo);
