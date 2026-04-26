@@ -1,4 +1,8 @@
+// changing `a * b + c` to `a.mul_add(b, c)` literally leads to more
+// verification errors, so we don't do that.
+#![allow(clippy::suboptimal_flops)]
 use std::f64::consts::PI;
+use std::iter;
 use std::time::Duration;
 
 use bumpalo::Bump;
@@ -11,23 +15,29 @@ use rayon::prelude::*;
 use voxell_rng::rng::pcg_advanced::pcg_64::PcgInnerState64;
 use voxell_timer::time_fn;
 
-// --- Constants ---
 const MAX_ITERATIONS: usize = 5000;
 const BH_STEPS: usize = 50;
 const BH_STEP_SIZE: f64 = 0.2;
 const BH_TEMP: f64 = 0.1;
 const VERIFY_EPS: f64 = 1e-9;
-const GRADIENT_EPS_REL: f64 = 1.0; // Scaled by f64::EPSILON.sqrt()
+const GRADIENT_EPS_REL: f64 = 1.0;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
+    /// Number of inner polygons
     pub inner_polygons: usize,
+    /// Number of sides of the inner polygons
     pub inner_sides: usize,
+    /// Number of sides of the container polygon
     pub container_sides: usize,
+    /// Number of attempts to run
     #[arg(long, default_value_t = 1000)]
     pub attempts: usize,
+    /// Overlap penalty tolerance. Probably best left at default.
     #[arg(long, default_value_t = 1e-8)]
     pub tolerance: f64,
+    /// How small the last theoretical step in container size decrease will be
+    /// (it gets smaller over time)
     #[arg(long, default_value_t = 0.0001)]
     pub finalstep: f64,
 }
@@ -65,7 +75,6 @@ fn main() {
     }
 }
 
-/// SoA (Structure of Arrays) representation for geometry to aid cache locality
 struct Geometry {
     inner_verts_x: Vec<f64>,
     inner_verts_y: Vec<f64>,
@@ -116,11 +125,9 @@ impl Geometry {
     }
 }
 
-/// Scratchpad to hold temporary polygon data and reduce allocations.
-/// Using Bumpalo for fast, scoped arena allocation.
 struct ScratchPad<'a> {
-    // (x, y) vertices for each polygon, flattened: [poly0_vx0, poly0_vy0,
-    // poly0_vx1, ...]
+    // (x, y) vertices for each polygon,
+    // flattened: [poly0_vx0, poly0_vy0, poly0_vx1, ...]
     poly_verts: &'a mut [f64],
     // (x, y) axes for each polygon, flattened
     poly_axes: &'a mut [f64],
@@ -144,23 +151,19 @@ fn penalty(
     let limit = geo.apothem * s;
     let nsi = args.inner_sides;
 
-    // 1. Container Penalty & Fill Scratchpad (SoA-style transformation)
     for i in 0..args.inner_polygons {
         let (px, py, pr) = (v[i * 3], v[i * 3 + 1], v[i * 3 + 2]);
         let (sin_r, cos_r) = pr.sin_cos();
 
         for j in 0..nsi {
-            // Transform vertex
             let vx = geo.inner_verts_x[j];
             let vy = geo.inner_verts_y[j];
             let tx = cos_r * vx - sin_r * vy + px;
             let ty = sin_r * vx + cos_r * vy + py;
 
-            // Store in scratchpad for SAT phase
             pad.poly_verts[(i * nsi + j) * 2] = tx;
             pad.poly_verts[(i * nsi + j) * 2 + 1] = ty;
 
-            // Container check
             for k in 0..geo.cont_axes_x.len() {
                 let dist = tx * geo.cont_axes_x[k] + ty * geo.cont_axes_y[k];
                 if dist > limit {
@@ -169,7 +172,6 @@ fn penalty(
             }
         }
 
-        // Transform axes for SAT
         for j in 0..nsi {
             let ax = geo.inner_axes_x[j];
             let ay = geo.inner_axes_y[j];
@@ -178,7 +180,6 @@ fn penalty(
         }
     }
 
-    // 2. Pairwise Collision Penalty (SAT)
     for i in 0..args.inner_polygons {
         let i_off = i * nsi * 2;
         for j in i + 1..args.inner_polygons {
@@ -186,7 +187,6 @@ fn penalty(
             let mut min_overlap = 1e20;
             let mut collision = true;
 
-            // Check axes of both polygons
             for k in 0..(nsi * 2) {
                 let (ax, ay) = if k < nsi {
                     (
@@ -246,7 +246,6 @@ fn local_min(
     x0: &[f64], s: f64, args: &Args, geo: &Geometry, bump: &mut Bump,
 ) -> Option<Vec<f64>> {
     let mut x = x0.to_vec();
-    // Reuse caller-provided arena to avoid allocating an arena per call.
     bump.reset();
 
     struct OptCtx<'a> {
@@ -280,7 +279,6 @@ fn local_min(
 
     opt.set_ftol_rel(args.tolerance).ok();
     opt.set_xtol_rel(args.tolerance).ok();
-    // Use the cast as requested
     opt.set_maxeval(MAX_ITERATIONS as _).ok();
 
     match opt.optimize(&mut x) {
@@ -301,7 +299,6 @@ fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
     let initial_s = s;
     let mut x = vec![0.0; args.inner_polygons * 3];
 
-    // Initial positioning
     if rand() < 0.5 {
         x.iter_mut().for_each(|v| *v = (rand() - 0.5) * s);
     } else {
@@ -309,7 +306,7 @@ fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
         let span = s * 0.45;
         for i in 0..args.inner_polygons {
             let step = if gc > 1 {
-                (2.0 * span / (gc - 1) as f64)
+                2.0 * span / (gc - 1) as f64
             } else {
                 0.0
             };
@@ -328,7 +325,7 @@ fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
                 ScratchPad::new(&bump, args.inner_polygons, args.inner_sides);
             let p = penalty(&refined, s, args, geo, &mut pad);
             if p < args.tolerance {
-                last_x = refined.clone();
+                last_x.clone_from(&refined);
                 last_s = s;
                 let base = (args.inner_polygons as f64).sqrt()
                     * args.inner_sides as f64
@@ -337,18 +334,16 @@ fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
                     -((0.01 - args.finalstep) / (initial_s - base)),
                     1.0 - args.finalstep,
                 );
-                // FIXED: Only scale positions (indices 0 and 1 mod 3), NOT
-                // rotations (index 2 mod 3)
                 for i in 0..args.inner_polygons {
                     x[i * 3] = refined[i * 3] * m;
                     x[i * 3 + 1] = refined[i * 3 + 1] * m;
-                    x[i * 3 + 2] = refined[i * 3 + 2]; // Rotation remains constant
+                    x[i * 3 + 2] = refined[i * 3 + 2];
                 }
                 s *= m;
                 continue;
             }
             if let Some(bh) = run_bh(&refined, p, s, args, geo, &mut rand) {
-                last_x = bh.clone();
+                last_x.clone_from(&bh);
                 last_s = s;
                 let base = (args.inner_polygons as f64).sqrt()
                     * args.inner_sides as f64
@@ -357,15 +352,11 @@ fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
                     -((0.01 - args.finalstep) / (initial_s - base)),
                     1.0 - args.finalstep,
                 );
-                // --- FIX APPLIED HERE ---
-                // Change this: x = bh.iter().map(|v| v * m).collect();
-                // To this:
                 for i in 0..args.inner_polygons {
                     x[i * 3] = bh[i * 3] * m;
                     x[i * 3 + 1] = bh[i * 3 + 1] * m;
-                    x[i * 3 + 2] = bh[i * 3 + 2]; // Keep rotation intact!
+                    x[i * 3 + 2] = bh[i * 3 + 2];
                 }
-                // ------------------------
                 s *= m;
                 continue;
             }
@@ -394,7 +385,7 @@ fn run_bh(
             let opt_p = penalty(&opt_x, s, args, geo, &mut pad);
             if opt_p < best_p {
                 best_p = opt_p;
-                best_x = opt_x.clone();
+                best_x.clone_from(&opt_x);
             }
             if opt_p < cur_p || ((cur_p - opt_p) / BH_TEMP).exp() > rand() {
                 cur_p = opt_p;
@@ -411,13 +402,12 @@ fn run_bh(
 fn verify_results(v: &[f64], s: f64, args: &Args, geo: &Geometry) {
     println!("--- Verification Pass ---");
     let bump = Bump::new();
-    let mut pad = ScratchPad::new(&bump, args.inner_polygons, args.inner_sides);
+    let pad = ScratchPad::new(&bump, args.inner_polygons, args.inner_sides);
     let limit = geo.apothem * s;
     let mut overlap_count = 0;
     let mut out_of_bounds = 0;
     let nsi = args.inner_sides;
 
-    // 1. Fully populate the scratchpad FIRST
     for i in 0..args.inner_polygons {
         let (px, py, pr) = (v[i * 3], v[i * 3 + 1], v[i * 3 + 2]);
         let (sin_r, cos_r) = pr.sin_cos();
@@ -439,7 +429,6 @@ fn verify_results(v: &[f64], s: f64, args: &Args, geo: &Geometry) {
         }
     }
 
-    // 2. Perform verification checks on the complete data
     for i in 0..args.inner_polygons {
         let mut is_out = false;
         for j in 0..nsi {
@@ -513,7 +502,7 @@ fn render(args: &Args, geo: &Geometry, s: f64, v: &[f64]) {
         .collect();
     c_pts.push(c_pts[0]);
     chart
-        .draw_series(std::iter::once(PathElement::new(c_pts, BLACK)))
+        .draw_series(iter::once(PathElement::new(c_pts, BLACK)))
         .ok();
 
     for i in 0..args.inner_polygons {
@@ -531,14 +520,14 @@ fn render(args: &Args, geo: &Geometry, s: f64, v: &[f64]) {
             })
             .collect();
         chart
-            .draw_series(std::iter::once(Polygon::new(
+            .draw_series(iter::once(Polygon::new(
                 p_pts.clone(),
                 RGBColor(204, 204, 204).filled(),
             )))
             .ok();
         p_pts.push(p_pts[0]);
         chart
-            .draw_series(std::iter::once(PathElement::new(p_pts, BLACK)))
+            .draw_series(iter::once(PathElement::new(p_pts, BLACK)))
             .ok();
     }
 }
