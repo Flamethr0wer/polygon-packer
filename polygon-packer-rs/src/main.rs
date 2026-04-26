@@ -167,12 +167,20 @@ fn penalty(
             pad.poly_verts[(i * nsi + j) * 2] = tx;
             pad.poly_verts[(i * nsi + j) * 2 + 1] = ty;
 
-            for k in 0..geo.cont_axes_x.len() {
-                let dist = tx * geo.cont_axes_x[k] + ty * geo.cont_axes_y[k];
-                if dist > limit {
-                    p += (dist - limit).powi(2);
-                }
-            }
+            // for k in 0..geo.cont_axes_x.len() {
+            //     let dist = tx * geo.cont_axes_x[k] + ty * geo.cont_axes_y[k];
+            //     if dist > limit {
+            //         p += (dist - limit).powi(2);
+            //     }
+            // }
+            geo.cont_axes_x.iter().zip(&geo.cont_axes_y).for_each(
+                |(&ax, &ay)| {
+                    let dist = tx * ax + ty * ay;
+                    if dist > limit {
+                        p += (dist - limit).powi(2);
+                    }
+                },
+            );
         }
 
         for j in 0..nsi {
@@ -233,8 +241,12 @@ fn project_soa(
 ) -> (f64, f64) {
     let mut min = f64::MAX;
     let mut max = f64::MIN;
+    // for i in 0..n {
+    //     let dot = verts[offset + i * 2] * ax + verts[offset + i * 2 + 1] *
+    // ay;
+    let relevant_verts = &verts[offset..offset + n * 2];
     for i in 0..n {
-        let dot = verts[offset + i * 2] * ax + verts[offset + i * 2 + 1] * ay;
+        let dot = relevant_verts[i * 2] * ax + relevant_verts[i * 2 + 1] * ay;
         if dot < min {
             min = dot;
         }
@@ -246,9 +258,8 @@ fn project_soa(
 }
 
 fn local_min(
-    x0: &[f64], s: f64, args: &Args, geo: &Geometry, bump: &mut Bump,
+    x: &mut [f64], s: f64, args: &Args, geo: &Geometry, bump: &mut Bump,
 ) -> Option<Vec<f64>> {
-    let mut x = x0.to_vec();
     bump.reset();
 
     struct OptCtx<'a> {
@@ -258,7 +269,7 @@ fn local_min(
 
     let ctx = OptCtx {
         pad: ScratchPad::new(&*bump, args.inner_polygons, args.inner_sides),
-        x_tmp: x0.to_vec(),
+        x_tmp: x.to_vec(),
     };
 
     let obj = |xx: &[f64], grad: Option<&mut [f64]>, ctx: &mut OptCtx| -> f64 {
@@ -299,16 +310,13 @@ fn local_min(
     };
 
     let mut opt =
-        Nlopt::new(Algorithm::Lbfgs, x0.len(), obj, Target::Minimize, ctx);
+        Nlopt::new(Algorithm::Lbfgs, x.len(), obj, Target::Minimize, ctx);
 
     opt.set_ftol_rel(args.tolerance).ok();
     opt.set_xtol_rel(args.tolerance).ok();
     opt.set_maxeval(MAX_ITERATIONS as _).ok();
 
-    match opt.optimize(&mut x) {
-        Ok(_) => Some(x),
-        Err(_) => None,
-    }
+    opt.optimize(x).ok().map(|_| x.to_vec())
 }
 fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
     let mut rng = PcgInnerState64::oneseq_seeded(seed as u64);
@@ -341,16 +349,16 @@ fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
     }
 
     let mut bump = Bump::new();
-    let (mut last_x, mut last_s) = (x.clone(), s);
+    let (mut best_x, mut best_s) = (x.clone(), s);
 
     loop {
-        if let Some(refined) = local_min(&x, s, args, geo, &mut bump) {
+        if let Some(mut refined) = local_min(&mut x, s, args, geo, &mut bump) {
             let mut pad =
                 ScratchPad::new(&bump, args.inner_polygons, args.inner_sides);
             let p = penalty(&refined, s, args, geo, &mut pad);
             if p < args.tolerance {
-                last_x.clone_from(&refined);
-                last_s = s;
+                best_x.clone_from(&refined);
+                best_s = s;
                 let base = (args.inner_polygons as f64).sqrt()
                     * args.inner_sides as f64
                     / args.container_sides as f64;
@@ -362,17 +370,17 @@ fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
                 let range_s = initial_s - base;
                 let step_ratio = (0.01 - args.finalstep) / range_s;
                 let m = (1.0 - args.finalstep) - (diff_s * step_ratio);
-                for i in 0..args.inner_polygons {
-                    x[i * 3] = refined[i * 3] * m;
-                    x[i * 3 + 1] = refined[i * 3 + 1] * m;
-                    x[i * 3 + 2] = refined[i * 3 + 2];
-                }
+                refined.chunks_exact_mut(3).for_each(|c| {
+                    c[0] *= m;
+                    c[1] *= m;
+                });
+                x = refined;
                 s *= m;
                 continue;
             }
             if let Some(bh) = run_bh(&refined, p, s, args, geo, &mut rand) {
-                last_x.clone_from(&bh);
-                last_s = s;
+                best_x.clone_from(&bh);
+                best_s = s;
                 let base = (args.inner_polygons as f64).sqrt()
                     * args.inner_sides as f64
                     / args.container_sides as f64;
@@ -395,7 +403,7 @@ fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
         }
         break;
     }
-    (last_s, last_x)
+    (best_s, best_x)
 }
 
 fn run_bh(
@@ -404,14 +412,19 @@ fn run_bh(
 ) -> Option<Vec<f64>> {
     let (mut best_p, mut best_x) = (p, refined.to_vec());
     let (mut cur_p, mut cur_x) = (p, refined.to_vec());
+    let mut trial = cur_x.clone();
     let mut bump = Bump::new();
 
     for _ in 0..BH_STEPS {
-        let trial: Vec<_> = cur_x
-            .iter()
-            .map(|&v| v + (rand() - 0.5) * BH_STEP_SIZE)
-            .collect();
-        if let Some(opt_x) = local_min(&trial, s, args, geo, &mut bump) {
+        // let trial: Vec<_> = cur_x
+        //     .iter()
+        //     .map(|&v| v + (rand() - 0.5) * BH_STEP_SIZE)
+        //     .collect();
+        for (trial, cur_x) in trial.iter_mut().zip(&cur_x) {
+            *trial = *cur_x + (rand() - 0.5) * BH_STEP_SIZE;
+        }
+        // if let Some(opt_x) = local_min(&trial, s, args, geo, &mut bump) {
+        if let Some(opt_x) = local_min(&mut trial, s, args, geo, &mut bump) {
             let mut pad =
                 ScratchPad::new(&bump, args.inner_polygons, args.inner_sides);
             let opt_p = penalty(&opt_x, s, args, geo, &mut pad);
