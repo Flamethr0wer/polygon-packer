@@ -3,8 +3,6 @@ use std::time::Duration;
 
 use bumpalo::Bump;
 use clap::Parser;
-use nalgebra::Rotation2;
-use nalgebra::Vector2;
 use nlopt::Algorithm;
 use nlopt::Nlopt;
 use nlopt::Target;
@@ -277,7 +275,8 @@ fn local_min(
         f0
     };
 
-    let mut opt = Nlopt::new(Algorithm::Lbfgs, x0.len(), obj, Target::Minimize, ctx);
+    let mut opt =
+        Nlopt::new(Algorithm::Lbfgs, x0.len(), obj, Target::Minimize, ctx);
 
     opt.set_ftol_rel(args.tolerance).ok();
     opt.set_xtol_rel(args.tolerance).ok();
@@ -325,7 +324,8 @@ fn repetition(seed: usize, args: &Args, geo: &Geometry) -> (f64, Vec<f64>) {
 
     loop {
         if let Some(refined) = local_min(&x, s, args, geo, &mut bump) {
-            let mut pad = ScratchPad::new(&bump, args.inner_polygons, args.inner_sides);
+            let mut pad =
+                ScratchPad::new(&bump, args.inner_polygons, args.inner_sides);
             let p = penalty(&refined, s, args, geo, &mut pad);
             if p < args.tolerance {
                 last_x = refined.clone();
@@ -389,7 +389,8 @@ fn run_bh(
             .map(|&v| v + (rand() - 0.5) * BH_STEP_SIZE)
             .collect();
         if let Some(opt_x) = local_min(&trial, s, args, geo, &mut bump) {
-            let mut pad = ScratchPad::new(&bump, args.inner_polygons, args.inner_sides);
+            let mut pad =
+                ScratchPad::new(&bump, args.inner_polygons, args.inner_sides);
             let opt_p = penalty(&opt_x, s, args, geo, &mut pad);
             if opt_p < best_p {
                 best_p = opt_p;
