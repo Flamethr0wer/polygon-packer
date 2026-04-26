@@ -1,0 +1,6 @@
+.venv
+polygon-packer-py/__pycache__
+polygon-packer-py/venv
+polygon-packer-rs/target
+polygon-packer-rs/Cargo.lock 
+**/*.png
