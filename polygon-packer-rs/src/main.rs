@@ -18,6 +18,10 @@ use clap::Parser;
 use ndarray::Array2;
 use plotters::prelude::*;
 use rayon::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
+use bumpalo::Bump;
+use bumpalo::collections::Vec as BumpVec;
 use voxell_rng::rng::pcg_advanced::pcg_64::PcgInnerState64;
 
 #[derive(Parser, Debug)]
@@ -307,138 +311,11 @@ fn transform_polygon(
     transformed
 }
 
-fn rotate_vectors(a: FloatType, vectors: &Array2<FloatType>) -> Vec<FloatType> {
-    let n = vectors.shape()[0];
-    let mut rotated = vec![0.0 as FloatType; n * 2];
-    let ca = a.cos();
-    let sa = a.sin();
-    for i in 0..n {
-        let vx = vectors[[i, 0]];
-        let vy = vectors[[i, 1]];
-        rotated[i * 2] = vx * ca - vy * sa;
-        rotated[i * 2 + 1] = vx * sa + vy * ca;
-    }
-    rotated
-}
 
-fn poking_penalty(
-    vertices: &[FloatType],
-    S: FloatType,
-    unit_container_vectors: &Array2<FloatType>,
-    unit_container_apothem: FloatType,
-) -> FloatType {
-    let mut penalty: FloatType = 0.0;
-    let limit = unit_container_apothem * S;
-    let n_vertices = vertices.len() / 2;
-    let nsc = unit_container_vectors.shape()[0];
-    for v in 0..n_vertices {
-        let vx = vertices[v * 2];
-        let vy = vertices[v * 2 + 1];
-        for i in 0..nsc {
-            let dvx = unit_container_vectors[[i, 0]];
-            let dvy = unit_container_vectors[[i, 1]];
-            let distance = vx * dvx + vy * dvy;
-            if distance > limit {
-                let diff = distance - limit;
-                penalty += diff * diff;
-            }
-        }
-    }
-    penalty
-}
 
-fn bh_function(
-    values: &[FloatType],
-    S: FloatType,
-    N: usize,
-    nsi: usize,
-    nsc: usize,
-    unit_polygon_vertices: &Array2<FloatType>,
-    unit_polygon_vectors: &Array2<FloatType>,
-    unit_container_vectors: &Array2<FloatType>,
-    unit_container_apothem: FloatType,
-) -> FloatType {
-    let mut penalty: FloatType = 0.0;
-
-    let mut polygon_array: Vec<Vec<FloatType>> = Vec::with_capacity(N);
-    let mut vector_array: Vec<Vec<FloatType>> = Vec::with_capacity(N);
-
-    for i in 0..N {
-        let posx = values[i * 3];
-        let posy = values[i * 3 + 1];
-        let rot = values[i * 3 + 2];
-        let poly = transform_polygon(posx, posy, rot, unit_polygon_vertices);
-        let vecs = rotate_vectors(rot, unit_polygon_vectors);
-        penalty += poking_penalty(&poly, S, unit_container_vectors, unit_container_apothem);
-        polygon_array.push(poly);
-        vector_array.push(vecs);
-    }
-
-    for i in 0..N {
-        for j in (i + 1)..N {
-            let mut collision = true;
-            let huge: FloatType = 100000000000000000000.0 as FloatType;
-            let mut min_overlap: FloatType = huge;
-            for vec_idx in 0..(nsi * 2) {
-                let (x_axis, y_axis) = if vec_idx < nsi {
-                    (
-                        vector_array[i][vec_idx * 2],
-                        vector_array[i][vec_idx * 2 + 1],
-                    )
-                } else {
-                    (
-                        vector_array[j][(vec_idx - nsi) * 2],
-                        vector_array[j][(vec_idx - nsi) * 2 + 1],
-                    )
-                };
-
-                let mut min_1 = huge;
-                let mut max_1 = -huge;
-                for vert in 0..nsi {
-                    let dotp = polygon_array[i][vert * 2] * x_axis
-                        + polygon_array[i][vert * 2 + 1] * y_axis;
-                    if dotp < min_1 {
-                        min_1 = dotp;
-                    }
-                    if dotp > max_1 {
-                        max_1 = dotp;
-                    }
-                }
-
-                let mut min_2 = huge;
-                let mut max_2 = -huge;
-                for vert in 0..nsi {
-                    let dotp = polygon_array[j][vert * 2] * x_axis
-                        + polygon_array[j][vert * 2 + 1] * y_axis;
-                    if dotp < min_2 {
-                        min_2 = dotp;
-                    }
-                    if dotp > max_2 {
-                        max_2 = dotp;
-                    }
-                }
-
-                let overlap = (if max_1 < max_2 { max_1 } else { max_2 })
-                    - (if min_1 > min_2 { min_1 } else { min_2 });
-                if overlap <= (0.0 as FloatType) {
-                    collision = false;
-                    break;
-                }
-                if overlap < min_overlap {
-                    min_overlap = overlap;
-                }
-            }
-
-            if collision {
-                penalty += min_overlap * min_overlap;
-            }
-        }
-    }
-
-    penalty
-}
-
-struct BHProblem<'a> {
+// BHProblem struct must be declared before its impl. It holds arena-backed
+// scratch buffers to avoid transient allocations during cost evaluation.
+struct BHProblem<'a, 'b> {
     N: usize,
     nsi: usize,
     nsc: usize,
@@ -447,28 +324,160 @@ struct BHProblem<'a> {
     unit_container_vectors: &'a Array2<FloatType>,
     unit_container_apothem: FloatType,
     S: FloatType,
+    arena: &'b Bump,
+    polys_x: Rc<RefCell<BumpVec<'b, FloatType>>>,
+    polys_y: Rc<RefCell<BumpVec<'b, FloatType>>>,
+    vecs_x: Rc<RefCell<BumpVec<'b, FloatType>>>,
+    vecs_y: Rc<RefCell<BumpVec<'b, FloatType>>>,
 }
 
-impl<'a> CostFunction for BHProblem<'a> {
+// BH cost evaluation implemented as a method on the problem struct.
+// Use a bump arena and SoA scratch buffers (polys_x/polys_y, vecs_x/vecs_y)
+// to reduce transient heap allocations and improve data locality.
+impl<'a, 'b> BHProblem<'a, 'b> {
+    fn bh_function(&self, values: &[FloatType]) -> FloatType {
+        const HUGE: FloatType = 1e20 as FloatType;
+
+        let n_vertices = self.unit_polygon_vertices.shape()[0];
+        let nsi = self.nsi;
+        let nsc = self.nsc;
+
+        let limit = self.unit_container_apothem * self.S;
+
+        let mut penalty: FloatType = 0.0;
+
+        // Reusable, arena-allocated SoA buffers.
+        let mut polys_x = self.polys_x.borrow_mut();
+        let mut polys_y = self.polys_y.borrow_mut();
+        let mut vecs_x = self.vecs_x.borrow_mut();
+        let mut vecs_y = self.vecs_y.borrow_mut();
+
+        polys_x.clear();
+        polys_y.clear();
+        vecs_x.clear();
+        vecs_y.clear();
+
+        // Reserve expected capacity to avoid repeated grows
+        let total_points = (self.N as usize) * (n_vertices as usize);
+        polys_x.reserve(total_points);
+        polys_y.reserve(total_points);
+        vecs_x.reserve(total_points);
+        vecs_y.reserve(total_points);
+
+        // Fill transformed polygon coordinates and rotated edge vectors.
+        for i in 0..self.N {
+            let posx = values[i * 3];
+            let posy = values[i * 3 + 1];
+            let rot = values[i * 3 + 2];
+            let ca = rot.cos();
+            let sa = rot.sin();
+
+            for v in 0..n_vertices {
+                let vx = self.unit_polygon_vertices[[v, 0]];
+                let vy = self.unit_polygon_vertices[[v, 1]];
+                let px = posx + (vx * ca - vy * sa);
+                let py = posy + (vx * sa + vy * ca);
+                polys_x.push(px);
+                polys_y.push(py);
+
+                // poking penalty against container
+                for ci in 0..nsc {
+                    let dvx = self.unit_container_vectors[[ci, 0]];
+                    let dvy = self.unit_container_vectors[[ci, 1]];
+                    let distance = px * dvx + py * dvy;
+                    if distance > limit {
+                        let diff = distance - limit;
+                        penalty += diff * diff;
+                    }
+                }
+            }
+
+            for v in 0..n_vertices {
+                let vx = self.unit_polygon_vectors[[v, 0]];
+                let vy = self.unit_polygon_vectors[[v, 1]];
+                vecs_x.push(vx * ca - vy * sa);
+                vecs_y.push(vx * sa + vy * ca);
+            }
+        }
+
+        // Pairwise separating axis test using SoA buffers
+        for i in 0..self.N {
+            for j in (i + 1)..self.N {
+                let mut collision = true;
+                let mut min_overlap: FloatType = HUGE;
+
+                for vec_idx in 0..(nsi * 2) {
+                    let (x_axis, y_axis) = if vec_idx < nsi {
+                        (
+                            vecs_x[i * nsi + vec_idx],
+                            vecs_y[i * nsi + vec_idx],
+                        )
+                    } else {
+                        (
+                            vecs_x[j * nsi + (vec_idx - nsi)],
+                            vecs_y[j * nsi + (vec_idx - nsi)],
+                        )
+                    };
+
+                    let mut min_1 = HUGE;
+                    let mut max_1 = -HUGE;
+                    for vert in 0..nsi {
+                        let dotp = polys_x[i * nsi + vert] * x_axis
+                            + polys_y[i * nsi + vert] * y_axis;
+                        if dotp < min_1 {
+                            min_1 = dotp;
+                        }
+                        if dotp > max_1 {
+                            max_1 = dotp;
+                        }
+                    }
+
+                    let mut min_2 = HUGE;
+                    let mut max_2 = -HUGE;
+                    for vert in 0..nsi {
+                        let dotp = polys_x[j * nsi + vert] * x_axis
+                            + polys_y[j * nsi + vert] * y_axis;
+                        if dotp < min_2 {
+                            min_2 = dotp;
+                        }
+                        if dotp > max_2 {
+                            max_2 = dotp;
+                        }
+                    }
+
+                    let overlap = (if max_1 < max_2 { max_1 } else { max_2 })
+                        - (if min_1 > min_2 { min_1 } else { min_2 });
+                    if overlap <= (0.0 as FloatType) {
+                        collision = false;
+                        break;
+                    }
+                    if overlap < min_overlap {
+                        min_overlap = overlap;
+                    }
+                }
+
+                if collision {
+                    penalty += min_overlap * min_overlap;
+                }
+            }
+        }
+
+        penalty
+    }
+}
+
+
+
+impl<'a, 'b> CostFunction for BHProblem<'a, 'b> {
     type Param = Vec<FloatType>;
     type Output = FloatType;
 
     fn cost(&self, param: &Self::Param) -> Result<Self::Output, Error> {
-        Ok(bh_function(
-            param.as_slice(),
-            self.S,
-            self.N,
-            self.nsi,
-            self.nsc,
-            self.unit_polygon_vertices,
-            self.unit_polygon_vectors,
-            self.unit_container_vectors,
-            self.unit_container_apothem,
-        ))
+        Ok(self.bh_function(param.as_slice()))
     }
 }
 
-impl<'a> Gradient for BHProblem<'a> {
+impl<'a, 'b> Gradient for BHProblem<'a, 'b> {
     type Param = Vec<FloatType>;
     type Gradient = Vec<FloatType>;
 
@@ -476,36 +485,18 @@ impl<'a> Gradient for BHProblem<'a> {
         let n = param.len();
         let mut grad = vec![0.0 as FloatType; n];
         let eps = FloatType::EPSILON.sqrt();
+        let mut xp = param.clone();
+        let mut xm = param.clone();
         for i in 0..n {
             let xi = param[i];
             let h = eps * xi.abs().max(1.0 as FloatType);
-            let mut xp = param.clone();
             xp[i] = xi + h;
-            let mut xm = param.clone();
             xm[i] = xi - h;
-            let fp = bh_function(
-                xp.as_slice(),
-                self.S,
-                self.N,
-                self.nsi,
-                self.nsc,
-                self.unit_polygon_vertices,
-                self.unit_polygon_vectors,
-                self.unit_container_vectors,
-                self.unit_container_apothem,
-            );
-            let fm = bh_function(
-                xm.as_slice(),
-                self.S,
-                self.N,
-                self.nsi,
-                self.nsc,
-                self.unit_polygon_vertices,
-                self.unit_polygon_vectors,
-                self.unit_container_vectors,
-                self.unit_container_apothem,
-            );
+            let fp = self.bh_function(xp.as_slice());
+            let fm = self.bh_function(xm.as_slice());
             grad[i] = (fp - fm) / (2.0 as FloatType * h);
+            xp[i] = xi;
+            xm[i] = xi;
         }
         Ok(grad)
     }
@@ -591,6 +582,14 @@ fn repetition(
     // Match Python's local-minimizer `tol=1e-8` used in `minimize(..., tol=1e-8)`
     let solver_tol: FloatType = 1e-8 as FloatType;
 
+    // Single arena reused for all BHProblem evaluations in this repetition.
+    let arena = Bump::new();
+    // Reusable arena-backed scratch buffers (wrapped in RefCell for interior mutability)
+    let polys_x = Rc::new(RefCell::new(BumpVec::new_in(&arena)));
+    let polys_y = Rc::new(RefCell::new(BumpVec::new_in(&arena)));
+    let vecs_x = Rc::new(RefCell::new(BumpVec::new_in(&arena)));
+    let vecs_y = Rc::new(RefCell::new(BumpVec::new_in(&arena)));
+
     loop {
         // Local minimization using L-BFGS (match Python's L-BFGS-B)
         let problem = BHProblem {
@@ -602,6 +601,11 @@ fn repetition(
             unit_container_vectors,
             unit_container_apothem,
             S: dynamic_S,
+            arena: &arena,
+            polys_x: polys_x.clone(),
+            polys_y: polys_y.clone(),
+            vecs_x: vecs_x.clone(),
+            vecs_y: vecs_y.clone(),
         };
 
         let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
@@ -632,7 +636,9 @@ fn repetition(
                         - final_step_size
                         - (dynamic_S - base)
                             * ((0.01 as FloatType - final_step_size) / (initial_S - base));
-                    x0 = param.iter().map(|v| v * multiplier).collect();
+                    for i in 0..x0.len() {
+                        x0[i] = param[i] * multiplier;
+                    }
                     dynamic_S *= multiplier;
                 }
             } else {
@@ -658,6 +664,11 @@ fn repetition(
                         unit_container_vectors,
                         unit_container_apothem,
                         S: dynamic_S,
+                        arena: &arena,
+                        polys_x: polys_x.clone(),
+                        polys_y: polys_y.clone(),
+                        vecs_x: vecs_x.clone(),
+                        vecs_y: vecs_y.clone(),
                     };
                     let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
                     let linesearch = BacktrackingLineSearch::new(armijo);
@@ -703,7 +714,9 @@ fn repetition(
                         - final_step_size
                         - (dynamic_S - base)
                             * ((0.01 as FloatType - final_step_size) / (initial_S - base));
-                    x0 = last_valid_x.iter().map(|v| v * multiplier).collect();
+                    for i in 0..x0.len() {
+                        x0[i] = last_valid_x[i] * multiplier;
+                    }
                     dynamic_S *= multiplier;
                     success = true;
                 } else {
@@ -728,6 +741,11 @@ fn repetition(
                     unit_container_vectors,
                     unit_container_apothem,
                     S: dynamic_S,
+                    arena: &arena,
+                    polys_x: polys_x.clone(),
+                    polys_y: polys_y.clone(),
+                    vecs_x: vecs_x.clone(),
+                    vecs_y: vecs_y.clone(),
                 };
                 let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
                 let linesearch = BacktrackingLineSearch::new(armijo);
