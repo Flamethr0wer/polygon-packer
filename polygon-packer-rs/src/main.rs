@@ -370,16 +370,16 @@ impl<'a> BHProblem<'a> {
             for v in 0..n_vertices {
                 let vx = self.unit_polygon_vertices[[v, 0]];
                 let vy = self.unit_polygon_vertices[[v, 1]];
-                let px = posx + (vx * ca - vy * sa);
-                let py = posy + (vx * sa + vy * ca);
+                let px = posx + vy.mul_add(-sa, vx * ca);
+                let py = posy + vy.mul_add(ca, vx * sa);
 
                 for ci in 0..nsc {
                     let dvx = self.unit_container_vectors[[ci, 0]];
                     let dvy = self.unit_container_vectors[[ci, 1]];
-                    let distance = px * dvx + py * dvy;
+                    let distance = py.mul_add(dvy, px * dvx);
                     if distance > limit {
                         let diff = distance - limit;
-                        penalty += diff * diff;
+                        penalty = diff.mul_add(diff, penalty);
                     }
                 }
             }
@@ -409,12 +409,18 @@ impl<'a> BHProblem<'a> {
                         let v = vec_idx;
                         let ux = self.unit_polygon_vectors[[v, 0]];
                         let uy = self.unit_polygon_vectors[[v, 1]];
-                        (ux * ca_i - uy * sa_i, ux * sa_i + uy * ca_i)
+                        (
+                            uy.mul_add(-sa_i, ux * ca_i),
+                            uy.mul_add(ca_i, ux * sa_i),
+                        )
                     } else {
                         let v = vec_idx - nsi;
                         let ux = self.unit_polygon_vectors[[v, 0]];
                         let uy = self.unit_polygon_vectors[[v, 1]];
-                        (ux * ca_j - uy * sa_j, ux * sa_j + uy * ca_j)
+                        (
+                            uy.mul_add(-sa_j, ux * ca_j),
+                            uy.mul_add(ca_j, ux * sa_j),
+                        )
                     };
 
                     let mut min_1 = HUGE;
@@ -422,9 +428,9 @@ impl<'a> BHProblem<'a> {
                     for vert in 0..nsi {
                         let vx = self.unit_polygon_vertices[[vert, 0]];
                         let vy = self.unit_polygon_vertices[[vert, 1]];
-                        let px = posx_i + (vx * ca_i - vy * sa_i);
-                        let py = posy_i + (vx * sa_i + vy * ca_i);
-                        let dotp = px * x_axis + py * y_axis;
+                        let px = posx_i + vy.mul_add(-sa_i, vx * ca_i);
+                        let py = posy_i + vy.mul_add(ca_i, vx * sa_i);
+                        let dotp = py.mul_add(y_axis, px * x_axis);
                         if dotp < min_1 {
                             min_1 = dotp;
                         }
@@ -438,9 +444,9 @@ impl<'a> BHProblem<'a> {
                     for vert in 0..nsi {
                         let vx = self.unit_polygon_vertices[[vert, 0]];
                         let vy = self.unit_polygon_vertices[[vert, 1]];
-                        let px = posx_j + (vx * ca_j - vy * sa_j);
-                        let py = posy_j + (vx * sa_j + vy * ca_j);
-                        let dotp = px * x_axis + py * y_axis;
+                        let px = posx_j + vy.mul_add(-sa_j, vx * ca_j);
+                        let py = posy_j + vy.mul_add(ca_j, vx * sa_j);
+                        let dotp = py.mul_add(y_axis, px * x_axis);
                         if dotp < min_2 {
                             min_2 = dotp;
                         }
@@ -461,7 +467,7 @@ impl<'a> BHProblem<'a> {
                 }
 
                 if collision {
-                    penalty += min_overlap * min_overlap;
+                    penalty = min_overlap.mul_add(min_overlap, penalty);
                 }
             }
         }
@@ -504,12 +510,12 @@ impl<'a> Gradient for BHProblem<'a> {
     }
 }
 
-fn initial_simplex(x0: &Vec<FloatType>) -> Vec<Vec<FloatType>> {
+fn initial_simplex(x0: &[FloatType]) -> Vec<Vec<FloatType>> {
     let n = x0.len();
     let mut simplex: Vec<Vec<FloatType>> = Vec::with_capacity(n + 1);
-    simplex.push(x0.clone());
+    simplex.push(x0.to_owned());
     for i in 0..n {
-        let mut xi = x0.clone();
+        let mut xi = x0.to_owned();
         let delta = (0.05 as FloatType) * (1.0 as FloatType + x0[i].abs());
         xi[i] += delta;
         simplex.push(xi);
@@ -518,8 +524,9 @@ fn initial_simplex(x0: &Vec<FloatType>) -> Vec<Vec<FloatType>> {
 }
 
 // def repetition(seed):
+#[allow(clippy::too_many_arguments)]
 fn repetition(
-    seed: usize, N: usize, nsi: usize, nsc: usize,
+    seed: usize, n: usize, nsi: usize, nsc: usize,
     penalty_tolerance: FloatType, final_step_size: FloatType,
     unit_polygon_vertices: &Array2<FloatType>,
     unit_polygon_vectors: &Array2<FloatType>,
@@ -535,40 +542,44 @@ fn repetition(
         let rand = ((hi as u64) << 32) | lo as u64;
         rand as FloatType / (u64::MAX as FloatType)
     };
-    let mut dynamic_S = (N as FloatType).sqrt()
+    let mut dynamic_s = (n as FloatType).sqrt()
         * (2.0 as FloatType + rand01(&mut rng) * 2.0 as FloatType);
-    let initial_S = dynamic_S;
+    let initial_s = dynamic_s;
 
-    let mut x0 = vec![0.0 as FloatType; N * 3];
+    let mut x0 = vec![0.0 as FloatType; n * 3];
 
     if rand01(&mut rng) < 0.5 {
-        for i in 0..(N * 3) {
-            x0[i] = (rand01(&mut rng) - 0.5 as FloatType) * dynamic_S;
+        for item in x0.iter_mut().take(n * 3) {
+            *item = (rand01(&mut rng) - 0.5 as FloatType) * dynamic_s;
         }
     } else {
-        let grid_count = ((N as FloatType).sqrt().ceil()) as usize;
-        let min = -dynamic_S / (2.0 as FloatType) * (0.9 as FloatType);
-        let max = dynamic_S / (2.0 as FloatType) * (0.9 as FloatType);
+        let grid_count = ((n as FloatType).sqrt().ceil()) as usize;
+        let min = -dynamic_s / (2.0 as FloatType) * (0.9 as FloatType);
+        let max = dynamic_s / (2.0 as FloatType) * (0.9 as FloatType);
         let mut grid_points: Vec<(FloatType, FloatType)> =
             Vec::with_capacity(grid_count * grid_count);
         for gy in 0..grid_count {
             for gx in 0..grid_count {
                 let xi = if grid_count > 1 {
-                    min + (gx as FloatType)
-                        * ((max - min) / ((grid_count - 1) as FloatType))
+                    (gx as FloatType).mul_add(
+                        (max - min) / ((grid_count - 1) as FloatType),
+                        min,
+                    )
                 } else {
                     (min + max) / (2.0 as FloatType)
                 };
                 let yi = if grid_count > 1 {
-                    min + (gy as FloatType)
-                        * ((max - min) / ((grid_count - 1) as FloatType))
+                    (gy as FloatType).mul_add(
+                        (max - min) / ((grid_count - 1) as FloatType),
+                        min,
+                    )
                 } else {
                     (min + max) / (2.0 as FloatType)
                 };
                 grid_points.push((xi, yi));
             }
         }
-        for i in 0..N {
+        for i in 0..n {
             let (gx, gy) = grid_points[i % grid_points.len()];
             x0[i * 3] = gx;
             x0[i * 3 + 1] = gy;
@@ -577,7 +588,7 @@ fn repetition(
     }
 
     let mut last_valid_x = x0.clone();
-    let mut last_valid_S = dynamic_S;
+    let mut last_valid_s = dynamic_s;
 
     // Match Python's local-minimizer `tol=1e-8` used in `minimize(...,
     // tol=1e-8)`
@@ -586,14 +597,14 @@ fn repetition(
     loop {
         // Local minimization using L-BFGS (match Python's L-BFGS-B)
         let problem = BHProblem {
-            n: N,
+            n,
             nsi,
             nsc,
             unit_polygon_vertices,
             unit_polygon_vectors,
             unit_container_vectors,
             unit_container_apothem,
-            s: dynamic_S,
+            s: dynamic_s,
         };
 
         let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
@@ -613,24 +624,24 @@ fn repetition(
             let fun = res.state.get_best_cost();
             if fun < penalty_tolerance {
                 if let Some(param) = res.state.get_best_param() {
-                    last_valid_x = param.clone();
-                    last_valid_S = dynamic_S;
+                    last_valid_x.clone_from(param);
+                    last_valid_s = dynamic_s;
                     success = true;
                     // compute multiplier (match Python exactly)
-                    let base = (N as FloatType).sqrt() * (nsi as FloatType)
+                    let base = (n as FloatType).sqrt() * (nsi as FloatType)
                         / (nsc as FloatType);
                     let mut multiplier = 0.9999 as FloatType
-                        - (dynamic_S - base) * (0.0099 as FloatType)
-                            / (initial_S - base);
-                    multiplier = 1.0 as FloatType
-                        - final_step_size
-                        - (dynamic_S - base)
-                            * ((0.01 as FloatType - final_step_size)
-                                / (initial_S - base));
+                        - (dynamic_s - base) * (0.0099 as FloatType)
+                            / (initial_s - base);
+                    multiplier = (dynamic_s - base).mul_add(
+                        -((0.01 as FloatType - final_step_size)
+                            / (initial_s - base)),
+                        1.0 as FloatType - final_step_size,
+                    );
                     for i in 0..x0.len() {
                         x0[i] = param[i] * multiplier;
                     }
-                    dynamic_S *= multiplier;
+                    dynamic_s *= multiplier;
                 }
             } else {
                 // Basinhopping-like global search (many local starts)
@@ -643,20 +654,20 @@ fn repetition(
 
                 for _ in 0..50 {
                     let mut trial = current_param.clone();
-                    for k in 0..trial.len() {
-                        trial[k] += (rand01(&mut rng) - 0.5 as FloatType)
-                            * (2.0 as FloatType)
-                            * (0.1 as FloatType);
+                    for item in &mut trial {
+                        *item = ((rand01(&mut rng) - 0.5 as FloatType)
+                            * (2.0 as FloatType))
+                            .mul_add(0.1 as FloatType, *item);
                     }
                     let problem = BHProblem {
-                        n: N,
+                        n,
                         nsi,
                         nsc,
                         unit_polygon_vertices,
                         unit_polygon_vectors,
                         unit_container_vectors,
                         unit_container_apothem,
-                        s: dynamic_S,
+                        s: dynamic_s,
                     };
                     let armijo =
                         ArmijoCondition::<FloatType>::new(0.0001).unwrap();
@@ -695,22 +706,22 @@ fn repetition(
                 }
 
                 if best_bh_fun < penalty_tolerance {
-                    last_valid_x = best_bh_param.clone();
-                    last_valid_S = dynamic_S;
-                    let base = (N as FloatType).sqrt() * (nsi as FloatType)
+                    last_valid_x.clone_from(&best_bh_param);
+                    last_valid_s = dynamic_s;
+                    let base = (n as FloatType).sqrt() * (nsi as FloatType)
                         / (nsc as FloatType);
                     let mut multiplier = 0.9999 as FloatType
-                        - (dynamic_S - base) * (0.0099 as FloatType)
-                            / (initial_S - base);
-                    multiplier = 1.0 as FloatType
-                        - final_step_size
-                        - (dynamic_S - base)
-                            * ((0.01 as FloatType - final_step_size)
-                                / (initial_S - base));
+                        - (dynamic_s - base) * (0.0099 as FloatType)
+                            / (initial_s - base);
+                    multiplier = (dynamic_s - base).mul_add(
+                        -((0.01 as FloatType - final_step_size)
+                            / (initial_s - base)),
+                        1.0 as FloatType - final_step_size,
+                    );
                     for i in 0..x0.len() {
                         x0[i] = last_valid_x[i] * multiplier;
                     }
-                    dynamic_S *= multiplier;
+                    dynamic_s *= multiplier;
                     success = true;
                 } else {
                     break;
@@ -722,20 +733,19 @@ fn repetition(
             let mut found = false;
             for _ in 0..10 {
                 let mut trial = x0.clone();
-                for k in 0..trial.len() {
-                    trial[k] += (rand01(&mut rng) - 0.5 as FloatType)
-                        * dynamic_S
-                        * 0.1 as FloatType;
+                for item in &mut trial {
+                    *item = ((rand01(&mut rng) - 0.5 as FloatType) * dynamic_s)
+                        .mul_add(0.1 as FloatType, *item);
                 }
                 let problem = BHProblem {
-                    n: N,
+                    n,
                     nsi,
                     nsc,
                     unit_polygon_vertices,
                     unit_polygon_vectors,
                     unit_container_vectors,
                     unit_container_apothem,
-                    s: dynamic_S,
+                    s: dynamic_s,
                 };
                 let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
                 let linesearch = BacktrackingLineSearch::new(armijo);
@@ -755,7 +765,7 @@ fn repetition(
                             .get_best_param()
                             .cloned()
                             .unwrap_or(trial.clone());
-                        last_valid_S = dynamic_S;
+                        last_valid_s = dynamic_s;
                         x0 = last_valid_x.clone();
                         found = true;
                         break;
@@ -772,5 +782,5 @@ fn repetition(
         }
     }
 
-    (last_valid_S, last_valid_x)
+    (last_valid_s, last_valid_x)
 }
