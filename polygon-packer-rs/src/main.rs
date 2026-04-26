@@ -10,7 +10,11 @@ use rust_specific::FloatType;
 // this is π in either f32 or f64
 const PI: FloatType = <FloatType as AssocPI>::PI;
 
-use argmin::core::{CostFunction, Error, Executor, Gradient, State};
+use argmin::core::CostFunction;
+use argmin::core::Error;
+use argmin::core::Executor;
+use argmin::core::Gradient;
+use argmin::core::State;
 use argmin::solver::linesearch::BacktrackingLineSearch;
 use argmin::solver::linesearch::condition::ArmijoCondition;
 use argmin::solver::quasinewton::LBFGS;
@@ -35,7 +39,8 @@ struct Args {
     /// Overlap penalty tolerance. Probably best left at default
     #[arg(long, default_value_t = 1e-8)]
     tolerance: FloatType,
-    /// How small the last theoretical step in container size decrease will be (it gets smaller over time)
+    /// How small the last theoretical step in container size decrease will be
+    /// (it gets smaller over time)
     #[arg(long, default_value_t = 0.0001)]
     finalstep: FloatType,
 }
@@ -56,8 +61,10 @@ fn main() {
         .map(|i| 2.0 * PI * (i as FloatType) / (nsi as FloatType))
         .collect();
 
-    // unit_polygon_vertices = np.column_stack((np.cos(unit_polygon_angles), np.sin(unit_polygon_angles)))
-    let mut unit_polygon_vertices_buf: Vec<FloatType> = Vec::with_capacity(nsi * 2);
+    // unit_polygon_vertices = np.column_stack((np.cos(unit_polygon_angles),
+    // np.sin(unit_polygon_angles)))
+    let mut unit_polygon_vertices_buf: Vec<FloatType> =
+        Vec::with_capacity(nsi * 2);
     for &a in &unit_polygon_angles_vec {
         unit_polygon_vertices_buf.push(a.cos());
         unit_polygon_vertices_buf.push(a.sin());
@@ -65,8 +72,10 @@ fn main() {
     let unit_polygon_vertices: Array2<FloatType> =
         Array2::from_shape_vec((nsi, 2), unit_polygon_vertices_buf).unwrap();
 
-    // unit_polygon_vectors = np.column_stack((np.cos(unit_polygon_angles + np.pi / nsi), np.sin(unit_polygon_angles + np.pi / nsi)))
-    let mut unit_polygon_vectors_buf: Vec<FloatType> = Vec::with_capacity(nsi * 2);
+    // unit_polygon_vectors = np.column_stack((np.cos(unit_polygon_angles +
+    // np.pi / nsi), np.sin(unit_polygon_angles + np.pi / nsi)))
+    let mut unit_polygon_vectors_buf: Vec<FloatType> =
+        Vec::with_capacity(nsi * 2);
     let offset_nsi = PI / (nsi as FloatType);
     for &a in &unit_polygon_angles_vec {
         let aa = a + offset_nsi;
@@ -81,8 +90,10 @@ fn main() {
         .map(|i| 2.0 * PI * (i as FloatType) / (nsc as FloatType))
         .collect();
 
-    // unit_container_vertices = np.column_stack((np.cos(unit_container_angles), np.sin(unit_container_angles)))
-    let mut unit_container_vertices_buf: Vec<FloatType> = Vec::with_capacity(nsc * 2);
+    // unit_container_vertices = np.column_stack((np.cos(unit_container_angles),
+    // np.sin(unit_container_angles)))
+    let mut unit_container_vertices_buf: Vec<FloatType> =
+        Vec::with_capacity(nsc * 2);
     for &a in &unit_container_angles {
         unit_container_vertices_buf.push(a.cos());
         unit_container_vertices_buf.push(a.sin());
@@ -90,8 +101,10 @@ fn main() {
     let unit_container_vertices: Array2<FloatType> =
         Array2::from_shape_vec((nsc, 2), unit_container_vertices_buf).unwrap();
 
-    // unit_container_vectors = np.column_stack((np.cos(unit_container_angles + np.pi / nsc), np.sin(unit_container_angles + np.pi / nsc)))
-    let mut unit_container_vectors_buf: Vec<FloatType> = Vec::with_capacity(nsc * 2);
+    // unit_container_vectors = np.column_stack((np.cos(unit_container_angles +
+    // np.pi / nsc), np.sin(unit_container_angles + np.pi / nsc)))
+    let mut unit_container_vectors_buf: Vec<FloatType> =
+        Vec::with_capacity(nsc * 2);
     let offset_nsc = PI / (nsc as FloatType);
     for &a in &unit_container_angles {
         let aa = a + offset_nsc;
@@ -107,7 +120,8 @@ fn main() {
     let mut best_S: FloatType = FloatType::INFINITY;
     let mut best_values: Option<Vec<FloatType>> = None;
 
-    // results = Parallel(n_jobs=-1, prefer="processes")(delayed(repetition)(i) for i in range(attempts))
+    // results = Parallel(n_jobs=-1, prefer="processes")(delayed(repetition)(i)
+    // for i in range(attempts))
     let results: Vec<(FloatType, _)> = (0..attempts)
         .into_par_iter()
         .map(|i| {
@@ -136,7 +150,8 @@ fn main() {
     println!(
         "Final side length: {}",
         // best_S * np.sin(np.pi / nsc) / np.sin(np.pi / nsi),
-        best_S * (PI / (nsc as FloatType)).sin() / (PI / (nsi as FloatType)).sin(),
+        best_S * (PI / (nsc as FloatType)).sin()
+            / (PI / (nsi as FloatType)).sin(),
     );
 
     // ============== NOTE(@paladynee): ===============
@@ -145,11 +160,12 @@ fn main() {
     // rngs) have been checked against python over multiple passes.
     //
     // i am not well versed in mathematics so if anybody could fact check this
-    // implementation and remove this note, I'd be very glad.  
+    // implementation and remove this note, I'd be very glad.
 
     if let Some(vals) = best_values {
         if vals.len() == N * 3 {
-            let positions = Array2::from_shape_vec((N, 3), vals.clone()).unwrap();
+            let positions =
+                Array2::from_shape_vec((N, 3), vals.clone()).unwrap();
             println!("Final positions (first 5 rows):");
             for i in 0..std::cmp::min(5, N) {
                 println!("  {}: {:?}", i, positions.row(i));
@@ -165,7 +181,8 @@ fn main() {
                 let y = positions[[i, 1]];
                 let a = positions[[i, 2]];
                 let poly = transform_polygon(x, y, a, &unit_polygon_vertices);
-                let mut pts: Vec<(f64, f64)> = Vec::with_capacity(poly.len() / 2 + 1);
+                let mut pts: Vec<(f64, f64)> =
+                    Vec::with_capacity(poly.len() / 2 + 1);
                 for k in 0..(poly.len() / 2) {
                     let px = poly[k * 2] as f64;
                     let py = poly[k * 2 + 1] as f64;
@@ -241,7 +258,8 @@ fn main() {
                 .caption(
                     format!(
                         "Side length: {}",
-                        best_S * (PI / (nsc as FloatType)).sin() / (PI / (nsi as FloatType)).sin()
+                        best_S * (PI / (nsc as FloatType)).sin()
+                            / (PI / (nsi as FloatType)).sin()
                     ),
                     ("sans-serif", 20).into_font(),
                 )
@@ -249,8 +267,10 @@ fn main() {
                 .unwrap();
 
             // configure mesh to show ticks at our step sizes
-            let x_labels = ((span / x_step).round() as usize).saturating_add(1).max(2);
-            let y_labels = ((span / y_step).round() as usize).saturating_add(1).max(2);
+            let x_labels =
+                ((span / x_step).round() as usize).saturating_add(1).max(2);
+            let y_labels =
+                ((span / y_step).round() as usize).saturating_add(1).max(2);
             chart
                 .configure_mesh()
                 .x_labels(x_labels)
@@ -270,12 +290,18 @@ fn main() {
 
             // draw filled polygons and outlines
             for poly in polys {
-                let fill_style = Into::<ShapeStyle>::into(&RGBColor(204, 204, 204)).filled();
+                let fill_style =
+                    Into::<ShapeStyle>::into(&RGBColor(204, 204, 204)).filled();
                 chart
-                    .draw_series(std::iter::once(Polygon::new(poly.clone(), fill_style)))
+                    .draw_series(std::iter::once(Polygon::new(
+                        poly.clone(),
+                        fill_style,
+                    )))
                     .ok();
                 chart
-                    .draw_series(std::iter::once(PathElement::new(poly, &BLACK)))
+                    .draw_series(std::iter::once(PathElement::new(
+                        poly, &BLACK,
+                    )))
                     .ok();
             }
 
@@ -289,10 +315,7 @@ fn main() {
 
 // def repetition(seed):
 fn transform_polygon(
-    x: FloatType,
-    y: FloatType,
-    a: FloatType,
-    vertices: &Array2<FloatType>,
+    x: FloatType, y: FloatType, a: FloatType, vertices: &Array2<FloatType>,
 ) -> Vec<FloatType> {
     let n_vertices = vertices.shape()[0];
     let mut transformed = vec![0.0 as FloatType; n_vertices * 2];
@@ -306,8 +329,6 @@ fn transform_polygon(
     }
     transformed
 }
-
-
 
 // BHProblem struct holds problem data used during cost evaluation.
 // To reduce memory pressure we compute transformed vertices and axes
@@ -364,7 +385,8 @@ impl<'a> BHProblem<'a> {
             }
         }
 
-        // Pairwise separating axis test: compute axes and projections on-the-fly
+        // Pairwise separating axis test: compute axes and projections
+        // on-the-fly
         for i in 0..self.N {
             let posx_i = values[i * 3];
             let posy_i = values[i * 3 + 1];
@@ -448,8 +470,6 @@ impl<'a> BHProblem<'a> {
     }
 }
 
-
-
 impl<'a> CostFunction for BHProblem<'a> {
     type Param = Vec<FloatType>;
     type Output = FloatType;
@@ -499,12 +519,8 @@ fn initial_simplex(x0: &Vec<FloatType>) -> Vec<Vec<FloatType>> {
 
 // def repetition(seed):
 fn repetition(
-    seed: usize,
-    N: usize,
-    nsi: usize,
-    nsc: usize,
-    penalty_tolerance: FloatType,
-    final_step_size: FloatType,
+    seed: usize, N: usize, nsi: usize, nsc: usize,
+    penalty_tolerance: FloatType, final_step_size: FloatType,
     unit_polygon_vertices: &Array2<FloatType>,
     unit_polygon_vectors: &Array2<FloatType>,
     unit_container_vectors: &Array2<FloatType>,
@@ -519,8 +535,8 @@ fn repetition(
         let rand = ((hi as u64) << 32) | lo as u64;
         rand as FloatType / (u64::MAX as FloatType)
     };
-    let mut dynamic_S =
-        (N as FloatType).sqrt() * (2.0 as FloatType + rand01(&mut rng) * 2.0 as FloatType);
+    let mut dynamic_S = (N as FloatType).sqrt()
+        * (2.0 as FloatType + rand01(&mut rng) * 2.0 as FloatType);
     let initial_S = dynamic_S;
 
     let mut x0 = vec![0.0 as FloatType; N * 3];
@@ -538,12 +554,14 @@ fn repetition(
         for gy in 0..grid_count {
             for gx in 0..grid_count {
                 let xi = if grid_count > 1 {
-                    min + (gx as FloatType) * ((max - min) / ((grid_count - 1) as FloatType))
+                    min + (gx as FloatType)
+                        * ((max - min) / ((grid_count - 1) as FloatType))
                 } else {
                     (min + max) / (2.0 as FloatType)
                 };
                 let yi = if grid_count > 1 {
-                    min + (gy as FloatType) * ((max - min) / ((grid_count - 1) as FloatType))
+                    min + (gy as FloatType)
+                        * ((max - min) / ((grid_count - 1) as FloatType))
                 } else {
                     (min + max) / (2.0 as FloatType)
                 };
@@ -561,7 +579,8 @@ fn repetition(
     let mut last_valid_x = x0.clone();
     let mut last_valid_S = dynamic_S;
 
-    // Match Python's local-minimizer `tol=1e-8` used in `minimize(..., tol=1e-8)`
+    // Match Python's local-minimizer `tol=1e-8` used in `minimize(...,
+    // tol=1e-8)`
     let solver_tol: FloatType = 1e-8 as FloatType;
 
     loop {
@@ -598,13 +617,16 @@ fn repetition(
                     last_valid_S = dynamic_S;
                     success = true;
                     // compute multiplier (match Python exactly)
-                    let base = (N as FloatType).sqrt() * (nsi as FloatType) / (nsc as FloatType);
+                    let base = (N as FloatType).sqrt() * (nsi as FloatType)
+                        / (nsc as FloatType);
                     let mut multiplier = 0.9999 as FloatType
-                        - (dynamic_S - base) * (0.0099 as FloatType) / (initial_S - base);
+                        - (dynamic_S - base) * (0.0099 as FloatType)
+                            / (initial_S - base);
                     multiplier = 1.0 as FloatType
                         - final_step_size
                         - (dynamic_S - base)
-                            * ((0.01 as FloatType - final_step_size) / (initial_S - base));
+                            * ((0.01 as FloatType - final_step_size)
+                                / (initial_S - base));
                     for i in 0..x0.len() {
                         x0[i] = param[i] * multiplier;
                     }
@@ -613,9 +635,11 @@ fn repetition(
             } else {
                 // Basinhopping-like global search (many local starts)
                 let mut best_bh_fun = fun;
-                let mut best_bh_param = res.state.get_best_param().cloned().unwrap_or(x0.clone());
+                let mut best_bh_param =
+                    res.state.get_best_param().cloned().unwrap_or(x0.clone());
                 let mut current_fun = fun;
-                let mut current_param = res.state.get_best_param().cloned().unwrap_or(x0.clone());
+                let mut current_param =
+                    res.state.get_best_param().cloned().unwrap_or(x0.clone());
 
                 for _ in 0..50 {
                     let mut trial = current_param.clone();
@@ -634,7 +658,8 @@ fn repetition(
                         unit_container_apothem,
                         S: dynamic_S,
                     };
-                    let armijo = ArmijoCondition::<FloatType>::new(0.0001).unwrap();
+                    let armijo =
+                        ArmijoCondition::<FloatType>::new(0.0001).unwrap();
                     let linesearch = BacktrackingLineSearch::new(armijo);
                     let lbfgs = LBFGS::new(linesearch, 3)
                         .with_tolerance_grad(solver_tol)
@@ -656,7 +681,8 @@ fn repetition(
                         }
                         // Metropolis acceptance
                         if f2 < current_fun
-                            || ((current_fun - f2) / (0.1 as FloatType)).exp() > rand01(&mut rng)
+                            || ((current_fun - f2) / (0.1 as FloatType)).exp()
+                                > rand01(&mut rng)
                         {
                             current_fun = f2;
                             current_param = res2
@@ -671,13 +697,16 @@ fn repetition(
                 if best_bh_fun < penalty_tolerance {
                     last_valid_x = best_bh_param.clone();
                     last_valid_S = dynamic_S;
-                    let base = (N as FloatType).sqrt() * (nsi as FloatType) / (nsc as FloatType);
+                    let base = (N as FloatType).sqrt() * (nsi as FloatType)
+                        / (nsc as FloatType);
                     let mut multiplier = 0.9999 as FloatType
-                        - (dynamic_S - base) * (0.0099 as FloatType) / (initial_S - base);
+                        - (dynamic_S - base) * (0.0099 as FloatType)
+                            / (initial_S - base);
                     multiplier = 1.0 as FloatType
                         - final_step_size
                         - (dynamic_S - base)
-                            * ((0.01 as FloatType - final_step_size) / (initial_S - base));
+                            * ((0.01 as FloatType - final_step_size)
+                                / (initial_S - base));
                     for i in 0..x0.len() {
                         x0[i] = last_valid_x[i] * multiplier;
                     }
@@ -688,13 +717,15 @@ fn repetition(
                 }
             }
         } else {
-            // If local solver failed for any reason, try a few random local starts
+            // If local solver failed for any reason, try a few random local
+            // starts
             let mut found = false;
             for _ in 0..10 {
                 let mut trial = x0.clone();
                 for k in 0..trial.len() {
-                    trial[k] +=
-                        (rand01(&mut rng) - 0.5 as FloatType) * dynamic_S * 0.1 as FloatType;
+                    trial[k] += (rand01(&mut rng) - 0.5 as FloatType)
+                        * dynamic_S
+                        * 0.1 as FloatType;
                 }
                 let problem = BHProblem {
                     N,
