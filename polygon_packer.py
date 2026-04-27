@@ -127,6 +127,8 @@ def repetition(seed):
     np.random.seed(seed)
     dynamic_S = np.sqrt(N) * (2 + np.random.rand() * 2)
     initial_S = dynamic_S
+    lowest_S = np.sqrt(N) * nsi / nsc
+    range = initial_S - lowest_S
 
     if np.random.rand() < 0.5:
         x0 = np.random.uniform(-dynamic_S/2, dynamic_S/2, N * 3)
@@ -144,8 +146,7 @@ def repetition(seed):
 
     while True:
         minimized = minimize(bh_function, x0, args=(dynamic_S,), method="L-BFGS-B", tol=1e-8)
-        multiplier = 0.9999 - (dynamic_S - np.sqrt(N) * nsi / nsc) * 0.0099 / (initial_S - np.sqrt(N) * nsi / nsc)
-        multiplier = 1 - final_step_size - (dynamic_S - np.sqrt(N) * nsi / nsc) * (0.01 - final_step_size) / (initial_S - np.sqrt(N) * nsi / nsc)
+        multiplier = 1 - final_step_size - (dynamic_S - lowest_S) * (0.01 - final_step_size) / (range)
         if minimized.fun < penalty_tolerance:
             last_valid_x = minimized.x.copy()
             last_valid_S = dynamic_S.copy()
