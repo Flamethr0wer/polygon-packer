@@ -21,6 +21,15 @@ attempts = args.attempts
 penalty_tolerance = args.tolerance
 final_step_size = args.finalstep
 
+if nsi < 3:
+    raise ValueError("nsi can't be less than 3 (not valid polygon)")
+
+if nsc < 3:
+    raise ValueError("nsc can't be less than 3 (not valid polygen)")
+
+if N <= 0:
+    raise ValueError("inner_polygons has to be > 0")
+
 unit_polygon_angles = np.linspace(0, 2 * np.pi, nsi, endpoint=False)
 unit_polygon_vertices = np.column_stack((np.cos(unit_polygon_angles), np.sin(unit_polygon_angles)))
 unit_polygon_vectors = np.column_stack((np.cos(unit_polygon_angles + np.pi / nsi), np.sin(unit_polygon_angles + np.pi / nsi)))
@@ -157,18 +166,19 @@ def repetition(seed):
             
         if minimized.fun < penalty_tolerance:
             last_valid_x = minimized.x.copy()
-            last_valid_S = dynamic_S.copy()
+            last_valid_S = dynamic_S
             x0 = minimized.x * multiplier
             dynamic_S *= multiplier
         else:
             bh_result = basinhopping(
-                lambda x, s: bh_function(x, s),
+                bh_function,  # Pass the function directly
                 x0,
                 minimizer_kwargs={'method': 'L-BFGS-B', 'args': (dynamic_S,), 'tol': 1e-8},
                 niter=50,
                 T=0.1,
                 stepsize=0.1
             )
+            
             if bh_result.fun < penalty_tolerance:
                 last_valid_x = bh_result.x.copy()
                 last_valid_S = dynamic_S
