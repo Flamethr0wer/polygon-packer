@@ -1,0 +1,20 @@
+{
+  "name": "polygon-packer",
+  "version": "1.0.0",
+  "description": "2D bin packing algorithm for any number of any polygons inside any other polygon",
+  "main": "polygon_packer.js",
+  "type": "module",
+  "scripts": {
+    "start": "node polygon_packer.js",
+    "test": "node --test tests/**/*.test.js"
+  },
+  "keywords": ["packing", "polygon", "bin-packing", "optimization"],
+  "author": "Flamethrower",
+  "license": "MIT",
+  "dependencies": {
+    "numeric": "^1.2.6"
+  },
+  "devDependencies": {
+    "node-canvas": "^2.11.2"
+  }
+}
