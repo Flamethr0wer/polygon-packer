@@ -33,22 +33,26 @@ unit_container_apothem = np.cos(np.pi / nsc)
 def transform_polygon(x, y, a, vertices):
     n_vertices = vertices.shape[0]
     transformed = np.empty_like(vertices)
+    sina = np.sin(a)
+    cosa = np.cos(a)
     for i in range(n_vertices):
         vx = vertices[i, 0]
         vy = vertices[i, 1]
-        transformed[i, 0] = x + (vx * np.cos(a) - vy * np.sin(a))
-        transformed[i, 1] = y + (vx * np.sin(a) + vy * np.cos(a))
+        transformed[i, 0] = x + (vx * cosa - vy * sina)
+        transformed[i, 1] = y + (vx * sina + vy * cosa)
     return transformed
 
 @njit(cache=True)
 def rotate_vectors(a, vectors):
     n_vectors = vectors.shape[0]
     rotated = np.empty_like(vectors)
+    sina = np.sin(a)
+    cosa = np.cos(a)
     for i in range(n_vectors):
         vecx = vectors[i, 0]
         vecy = vectors[i, 1]
-        rotated[i, 0] = vecx * np.cos(a) - vecy * np.sin(a)
-        rotated[i, 1] = vecx * np.sin(a) + vecy * np.cos(a)
+        rotated[i, 0] = vecx * cosa - vecy * sina
+        rotated[i, 1] = vecx * sina + vecy * cosa
     return rotated
         
 @njit(cache=True)
