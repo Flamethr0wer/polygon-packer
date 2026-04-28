@@ -5,10 +5,10 @@ from numba import njit
 from joblib import Parallel, delayed
 import argparse
 
-arg_parser = argparse.ArgumentParser()
-arg_parser.add_argument("inner_polygons", type=int, help="Number of inner polygons")
-arg_parser.add_argument("inner_sides", type=int, help="Number of sides of the inner polygons")
-arg_parser.add_argument("container_sides", type=int, help="Number of sides of the container polygon")
+arg_parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+arg_parser.add_argument("-n", "--inner_polygons", type=int, required=True, default=argparse.SUPPRESS, help="Number of inner polygons")
+arg_parser.add_argument("-nsi", "--inner_sides", type=int, required=True, default=argparse.SUPPRESS, help="Number of sides of the inner polygons")
+arg_parser.add_argument("-nsc", "--container_sides", type=int, required=True, default=argparse.SUPPRESS, help="Number of sides of the container polygon")
 arg_parser.add_argument("--attempts", type=int, default=1000, help="Number of attempts to run")
 arg_parser.add_argument("--tolerance", type=float, default=1e-8, help="Overlap penalty tolerance. Probably best left at default")
 arg_parser.add_argument("--finalstep", type=float, default=0.0001, help="How small the last theoretical step in container size decrease will be (it gets smaller over time)")
