@@ -127,7 +127,7 @@ def repetition(seed):
     np.random.seed(seed)
     dynamic_S = np.sqrt(N) * (2 + np.random.rand() * 2)
     initial_S = dynamic_S
-    lowest_S = np.sqrt(N) * nsi / nsc
+    lowest_S = np.sqrt(N)
     range = initial_S - lowest_S
 
     if np.random.rand() < 0.5:
