@@ -44,15 +44,11 @@ def transform_polygon(x, y, a, vertices):
 
 @njit(cache=True)
 def rotate_vectors(a, vectors):
-    n_vectors = vectors.shape[0]
-    rotated = np.empty_like(vectors)
     sina = np.sin(a)
     cosa = np.cos(a)
-    for i in range(n_vectors):
-        vecx = vectors[i, 0]
-        vecy = vectors[i, 1]
-        rotated[i, 0] = vecx * cosa - vecy * sina
-        rotated[i, 1] = vecx * sina + vecy * cosa
+    rotated = np.empty_like(vectors)
+    rotated[:, 0] = vectors[:, 0] * cosa - vectors[:, 1] * sina
+    rotated[:, 1] = vectors[:, 0] * sina + vectors[:, 1] * cosa
     return rotated
         
 @njit(cache=True)
