@@ -1,5 +1,5 @@
 # Flamethrower's polygon packer
-This program can quickly solve the 2D bin packing problem for any number of any polygons inside any other polygon! It was the tool used to find all the optimal packings under the name "Ignacio Vallejo" on [Erich's Packing Center](https://erich-friedman.github.io/packing/).
+This program can quickly solve the 2D bin packing problem for any number of any regular convex polygon inside any other regular convex polygon! It was the tool used to find all the optimal packings under the name "Ignacio Vallejo" on [Erich's Packing Center](https://erich-friedman.github.io/packing/).
 <img width="640" height="480" alt="30 triangles in a hexagon" src="https://github.com/user-attachments/assets/48591a93-3ed9-4031-9c42-8b6eb579d91e" />
 
 ### How to use

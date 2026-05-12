@@ -4,6 +4,7 @@ import matplotlib.pyplot as ppt
 from numba import njit
 from joblib import Parallel, delayed
 import argparse
+import datetime
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument("inner_polygons", type=int, help="Number of inner polygons")
@@ -13,6 +14,8 @@ arg_parser.add_argument("--attempts", type=int, default=1000, help="Number of at
 arg_parser.add_argument("--tolerance", type=float, default=1e-8, help="Overlap penalty tolerance. Probably best left at default")
 arg_parser.add_argument("--finalstep", type=float, default=0.0001, help="How small the last theoretical step in container size decrease will be (it gets smaller over time)")
 args = arg_parser.parse_args()
+
+start_time = datetime.datetime.now()
 
 N = args.inner_polygons
 nsi = args.inner_sides
@@ -126,7 +129,7 @@ def bh_function(values, S):
     return penalty
 
 def repetition(seed):
-    print("Attempt", seed)
+    print("Attempt", seed, "/", attempts)
 
     np.random.seed(seed)
     dynamic_S = np.sqrt(N) * (2 + np.random.rand() * 2)
@@ -183,6 +186,9 @@ for s, values in results:
         best_S = s
         best_values = values
 
+end_time = datetime.datetime.now()
+
+print("Found final side length in", end_time - start_time)
 print("Final side length:", best_S * np.sin(np.pi / nsc) / np.sin(np.pi / nsi))
 
 final_positions = positions = best_values.reshape((N, 3))
@@ -195,4 +201,5 @@ for i in range(N):
     ax.fill(polygon_plot[:,0], polygon_plot[:,1], "#CCCCCC", edgecolor="black", linewidth=0.5)
 ax.set_aspect("equal")
 ppt.title(f"Side length: {best_S * np.sin(np.pi / nsc) / np.sin(np.pi / nsi)}")
-ppt.savefig(f"{N}_{nsi}_in_{nsc}.png")
+ppt.savefig(f"{N}_{nsi}_in_{nsc}_{attempts}attempts.png")
+ppt.savefig(f"{N}_{nsi}_in_{nsc}_{attempts}attempts.svg")
