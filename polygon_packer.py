@@ -25,20 +25,20 @@ final_step_size = args.finalstep
 provided_seed: int | None = args.initial_seed
 
 MAX_SEED: int = 2**32 - attempts
-initial_seed: int
+INITIAL_SEED: int
 
 if provided_seed is None:
-    initial_seed = random.randint(0, MAX_SEED)
+    INITIAL_SEED = random.randint(0, MAX_SEED)
 
 elif provided_seed < 0 or provided_seed > MAX_SEED:
     print("initial_seed has to be a positive integer between 0 and (2**32 - attempts).\n"
           "a different initial seed has been generated.")
-    initial_seed = random.randint(0, MAX_SEED)
+    INITIAL_SEED = random.randint(0, MAX_SEED)
 
 else:
-    initial_seed = provided_seed
+    INITIAL_SEED = provided_seed
 
-print("initial_seed:", initial_seed)
+print("initial_seed:", INITIAL_SEED)
 
 
 
@@ -199,8 +199,8 @@ def repetition(seed: int, atempt_index: int):
 
 best_S = float("inf")
 best_values = None
-results = Parallel(n_jobs=-1, prefer="processes")(delayed(repetition)(initial_seed, i) for i in range(attempts))
-    
+results = Parallel(n_jobs=-1, prefer="processes")(delayed(repetition)(INITIAL_SEED, i) for i in range(attempts))
+
 for s, values in results:
     if s < best_S:
         best_S = s
