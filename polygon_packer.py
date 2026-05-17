@@ -12,6 +12,7 @@ arg_parser.add_argument("container_sides", type=int, help="Number of sides of th
 arg_parser.add_argument("--attempts", type=int, default=1000, help="Number of attempts to run")
 arg_parser.add_argument("--tolerance", type=float, default=1e-8, help="Overlap penalty tolerance. Probably best left at default")
 arg_parser.add_argument("--finalstep", type=float, default=0.0001, help="How small the last theoretical step in container size decrease will be (it gets smaller over time)")
+arg_parser.add_argument("--initial_seed", type=int, default=None, help="Initial seed for number generation, expected to be an integer between 0 and (2**32 - attempts)")
 args = arg_parser.parse_args()
 
 N = args.inner_polygons
@@ -20,6 +21,26 @@ nsc = args.container_sides
 attempts = args.attempts
 penalty_tolerance = args.tolerance
 final_step_size = args.finalstep
+provided_seed: int | None = args.initial_seed
+
+MAX_SEED: int = 2**32 - attempts
+INITIAL_SEED: int
+
+if provided_seed is None:
+    INITIAL_SEED = np.random.randint(0, MAX_SEED)
+
+elif provided_seed < 0 or provided_seed > MAX_SEED:
+    print("initial_seed has to be a positive integer between 0 and (2**32 - attempts).\n"
+          "a different initial seed has been generated.")
+    INITIAL_SEED = np.random.randint(0, MAX_SEED)
+
+else:
+    INITIAL_SEED = provided_seed
+
+print("initial_seed:", INITIAL_SEED)
+
+
+
 
 unit_polygon_angles = np.linspace(0, 2 * np.pi, nsi, endpoint=False)
 unit_polygon_vertices = np.column_stack((np.cos(unit_polygon_angles), np.sin(unit_polygon_angles)))
@@ -125,10 +146,10 @@ def bh_function(values, S):
             
     return penalty
 
-def repetition(seed):
-    print("Attempt", seed)
+def repetition(seed: int, attempt_index: int):
+    print("Attempt", attempt_index)
 
-    np.random.seed(seed)
+    np.random.seed(seed + attempt_index)
     dynamic_S = np.sqrt(N) * (2 + np.random.rand() * 2)
     initial_S = dynamic_S
     lowest_S = np.sqrt(N)
@@ -174,10 +195,11 @@ def repetition(seed):
                 break
     return last_valid_S, last_valid_x
 
+
 best_S = float("inf")
 best_values = None
-results = Parallel(n_jobs=-1, prefer="processes")(delayed(repetition)(i) for i in range(attempts))
-    
+results = Parallel(n_jobs=-1, prefer="processes")(delayed(repetition)(INITIAL_SEED, i) for i in range(attempts))
+
 for s, values in results:
     if s < best_S:
         best_S = s
