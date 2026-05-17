@@ -3,7 +3,7 @@ from scipy.optimize import basinhopping, minimize
 import matplotlib.pyplot as ppt
 from numba import njit
 from joblib import Parallel, delayed
-from random import randint
+import random
 import argparse
 
 arg_parser = argparse.ArgumentParser()
@@ -13,6 +13,7 @@ arg_parser.add_argument("container_sides", type=int, help="Number of sides of th
 arg_parser.add_argument("--attempts", type=int, default=1000, help="Number of attempts to run")
 arg_parser.add_argument("--tolerance", type=float, default=1e-8, help="Overlap penalty tolerance. Probably best left at default")
 arg_parser.add_argument("--finalstep", type=float, default=0.0001, help="How small the last theoretical step in container size decrease will be (it gets smaller over time)")
+arg_parser.add_argument("--initial_seed", type=int, default=None, help="Initial seed for number generation, expected to be an integer between 0 and (2**32 - attempts)")
 args = arg_parser.parse_args()
 
 N = args.inner_polygons
@@ -21,6 +22,26 @@ nsc = args.container_sides
 attempts = args.attempts
 penalty_tolerance = args.tolerance
 final_step_size = args.finalstep
+provided_seed: int | None = args.initial_seed
+
+MAX_SEED: int = 2**32 - attempts
+initial_seed: int
+
+if provided_seed is None:
+    initial_seed = random.randint(0, MAX_SEED)
+
+elif provided_seed < 0 or provided_seed > MAX_SEED:
+    print("initial_seed has to be a positive integer between 0 and (2**32 - attempts).\n"
+          "a different initial seed has been generated.")
+    initial_seed = random.randint(0, MAX_SEED)
+
+else:
+    initial_seed = provided_seed
+
+print("initial_seed:", initial_seed)
+
+
+
 
 unit_polygon_angles = np.linspace(0, 2 * np.pi, nsi, endpoint=False)
 unit_polygon_vertices = np.column_stack((np.cos(unit_polygon_angles), np.sin(unit_polygon_angles)))
@@ -175,8 +196,6 @@ def repetition(seed: int, atempt_index: int):
                 break
     return last_valid_S, last_valid_x
 
-initial_seed = randint(0, 2**32 - attempts)
-print("initial_seed:", initial_seed)
 
 best_S = float("inf")
 best_values = None
