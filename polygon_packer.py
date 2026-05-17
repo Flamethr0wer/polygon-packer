@@ -3,6 +3,7 @@ from scipy.optimize import basinhopping, minimize
 import matplotlib.pyplot as ppt
 from numba import njit
 from joblib import Parallel, delayed
+from random import randint
 import argparse
 
 arg_parser = argparse.ArgumentParser()
@@ -125,10 +126,10 @@ def bh_function(values, S):
             
     return penalty
 
-def repetition(seed):
-    print("Attempt", seed)
+def repetition(seed: int, atempt_index: int):
+    print("Attempt", atempt_index)
 
-    np.random.seed(seed)
+    np.random.seed(seed + atempt_index)
     dynamic_S = np.sqrt(N) * (2 + np.random.rand() * 2)
     initial_S = dynamic_S
     lowest_S = np.sqrt(N)
@@ -174,9 +175,12 @@ def repetition(seed):
                 break
     return last_valid_S, last_valid_x
 
+initial_seed = randint(0, 2**32 - attempts)
+print("initial_seed:", initial_seed)
+
 best_S = float("inf")
 best_values = None
-results = Parallel(n_jobs=-1, prefer="processes")(delayed(repetition)(i) for i in range(attempts))
+results = Parallel(n_jobs=-1, prefer="processes")(delayed(repetition)(initial_seed, i) for i in range(attempts))
     
 for s, values in results:
     if s < best_S:
