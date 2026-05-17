@@ -147,10 +147,10 @@ def bh_function(values, S):
             
     return penalty
 
-def repetition(seed: int, atempt_index: int):
-    print("Attempt", atempt_index)
+def repetition(seed: int, attempt_index: int):
+    print("Attempt", attempt_index)
 
-    np.random.seed(seed + atempt_index)
+    np.random.seed(seed + attempt_index)
     dynamic_S = np.sqrt(N) * (2 + np.random.rand() * 2)
     initial_S = dynamic_S
     lowest_S = np.sqrt(N)
