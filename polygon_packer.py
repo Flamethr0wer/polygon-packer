@@ -3,7 +3,6 @@ from scipy.optimize import basinhopping, minimize
 import matplotlib.pyplot as ppt
 from numba import njit
 from joblib import Parallel, delayed
-import random
 import argparse
 
 arg_parser = argparse.ArgumentParser()
@@ -28,12 +27,12 @@ MAX_SEED: int = 2**32 - attempts
 INITIAL_SEED: int
 
 if provided_seed is None:
-    INITIAL_SEED = random.randint(0, MAX_SEED)
+    INITIAL_SEED = np.random.randint(0, MAX_SEED)
 
 elif provided_seed < 0 or provided_seed > MAX_SEED:
     print("initial_seed has to be a positive integer between 0 and (2**32 - attempts).\n"
           "a different initial seed has been generated.")
-    INITIAL_SEED = random.randint(0, MAX_SEED)
+    INITIAL_SEED = np.random.randint(0, MAX_SEED)
 
 else:
     INITIAL_SEED = provided_seed
