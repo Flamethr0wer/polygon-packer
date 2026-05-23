@@ -5,7 +5,7 @@ This program can quickly solve the 2D bin packing problem for any number of any 
 ### How to use
 Download the python file, navigate to its location and run it like this:
 
-`python3 polygon_packer.py [n] [nsi] [nsc]`
+`python3 polygon_packer.py -n [n] -nsi [nsi] -nsc [nsc]`
 - Replace `[n]` with the number of inner polygons you want to solve for
 - Replace `[nsi]` with the number of sides of the inner polygons (e.g. 4 for a square)
 - Replace `[nsc]` with the number of sides of the container polygon
