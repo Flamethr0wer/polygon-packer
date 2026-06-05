@@ -198,7 +198,7 @@ for i in range(N):
 ax.set_aspect("equal")
 ppt.title(f"Side length: {best_S * np.sin(np.pi / nsc) / np.sin(np.pi / nsi)}")
 
-if args.output_format = "png":
+if args.output_format == "png":
     if not os.path.exists(f"{N}_{nsi}_in_{nsc}.png"):
         ppt.savefig(f"{N}_{nsi}_in_{nsc}.png")
     else:
@@ -206,7 +206,7 @@ if args.output_format = "png":
         while os.path.exists(f"{N}_{nsi}_in_{nsc}_({file_i}).png"):
             file_i += 1
         ppt.savefig(f"{N}_{nsi}_in_{nsc}_({file_i}).png")
-elif args.output_format = "svg":
+elif args.output_format == "svg":
     if not os.path.exists(f"{N}_{nsi}_in_{nsc}.svg"):
         ppt.savefig(f"{N}_{nsi}_in_{nsc}.svg")
     else:
